@@ -1,0 +1,16 @@
+# pyproject.toml
+
+#[tool.setuptools.packages.find]
+#where = ["custom_components/"]
+#include = ["bms_ble"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts="--cov=custom_components.bms_ble --cov-report=term-missing --cov-fail-under=100"
+pythonpath = [
+    "custom_components.hunterdouglas_powerview_ble",
+]
+testpaths = [
+    "tests",
+]
+asyncio_mode = "auto"
