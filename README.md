@@ -59,9 +59,11 @@ Installation can be done using [HACS](https://hacs.xyz/) by [adding a custom rep
 
 
 ## Outlook
-- Add 
--
- 
+- Add support for encryption
+- Allow parallel usage to PowerView app as "remote"
+- Add support for tilt function
+- Add support for further device types
+
 ## Troubleshooting
 In case you have severe troubles,
 
