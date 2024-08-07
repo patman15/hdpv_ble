@@ -5,7 +5,7 @@
     {
       "service_uuid": "0000fdc1-0000-1000-8000-00805f9b34fb",
       "manufacturer_id": 2073,
-      "manufacturer_data_start": [0,0,42,0]
+      "manufacturer_data_start": [0,0]
     }
   ],
   "codeowners": ["@patman15"],
@@ -17,5 +17,5 @@
   "issue_tracker": "https://github.com/patman15/hdpv_ble/issues",
   "loggers": ["hunterdouglas_powerview_ble"],
   "requirements": [],
-  "version": "0.1"
+  "version": 0.11
 }

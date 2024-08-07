@@ -2,6 +2,9 @@
 
 from typing import Any
 
+from homeassistant.components.bluetooth.passive_update_coordinator import (
+    PassiveBluetoothCoordinatorEntity,
+)
 from homeassistant.components.cover import (
     ATTR_CURRENT_POSITION,
     ATTR_POSITION,
@@ -10,17 +13,17 @@ from homeassistant.components.cover import (
     CoverEntityFeature,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_IDENTIFIERS, ATTR_NAME
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo, format_mac
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .api import CLOSED_POSITION, OPEN_POSITION
 from .const import DOMAIN, LOGGER
 from .coordinator import PVCoordinator
 
 
 async def async_setup_entry(
-    hass: HomeAssistant,
+    _hass: HomeAssistant,
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
@@ -30,7 +33,7 @@ async def async_setup_entry(
     async_add_entities([PowerViewCover(coordinator)])
 
 
-class PowerViewCover(CoverEntity):
+class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEntity):  # type: ignore[reportIncompatibleVariableOverride]
     """Representation of a powerview shade."""
 
     _attr_has_entity_name = True
@@ -39,9 +42,8 @@ class PowerViewCover(CoverEntity):
         CoverEntityFeature.OPEN
         | CoverEntityFeature.CLOSE
         | CoverEntityFeature.SET_POSITION
-        #        | CoverEntityFeature.STOP
+        | CoverEntityFeature.STOP
     )
-    _attr_current_cover_position: int | None = None
 
     def __init__(
         self,
@@ -51,44 +53,69 @@ class PowerViewCover(CoverEntity):
         self._attr_name = CoverDeviceClass.SHADE
         self._coord = coordinator
         self._attr_device_info = self._coord.device_info
+        self._target_position: int | None = None
         self._attr_unique_id = (
             f"{DOMAIN}_{format_mac(self._coord.address)}_{CoverDeviceClass.SHADE}"
         )
-        self._attr_current_cover_position: int | None = 0
+        super().__init__(coordinator)
+
+    @property
+    def device_info(self) -> DeviceInfo:  # type: ignore[reportIncompatibleVariableOverride]
+        """Return the device_info of the device."""
+        return self._coord.device_info
+
+    @property
+    def is_opening(self) -> bool | None:  # type: ignore[reportIncompatibleVariableOverride]
+        """Return if the cover is opening or not."""
+        return bool(self._coord.data.get("is_opening"))
+
+    @property
+    def is_closing(self) -> bool | None:  # type: ignore[reportIncompatibleVariableOverride]
+        """Return if the cover is closing or not."""
+        return bool(self._coord.data.get("is_closing"))
 
     @property
     def is_closed(self) -> bool:  # type: ignore[reportIncompatibleVariableOverride]
         """Return if the cover is closed."""
-        return self._attr_current_cover_position == 0
+        return self.current_cover_position == CLOSED_POSITION
+
+    @property
+    def supported_features(self) -> CoverEntityFeature:  # type: ignore[reportIncompatibleVariableOverride]
+        """Flag supported features, disable control if encryption is needed."""
+        if self._coord.data.get("home_id") or self._coord.data.get("battery_charging"):
+            return CoverEntityFeature(0)
+
+        return super().supported_features
+
+    @property
+    def current_cover_position(self) -> int | None:  # type: ignore[reportIncompatibleVariableOverride]
+        """Return current position of cover.
+
+        None is unknown, 0 is closed, 100 is fully open.
+        """
+        if ATTR_CURRENT_POSITION in self._coord.data:
+            pos = self._coord.data.get(ATTR_CURRENT_POSITION)
+            return int(pos) if pos is not None else None
+        return None
 
     async def async_set_cover_position(self, **kwargs: Any) -> None:
         """Move the cover to a specific position."""
-        if pos := kwargs[ATTR_POSITION]:
-            LOGGER.debug("set cover to position %i", pos)
-            try:
-                await self._coord.api.set_position(pos)
-                self._attr_current_cover_position = pos
-            except TimeoutError:
-                pass
+        self._target_position = kwargs.get(ATTR_POSITION, None)
+        if self._target_position is not None:
+            LOGGER.debug("set cover to position %i", self._target_position)
+            await self._coord.api.set_position(self._target_position)
 
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Open the cover."""
         LOGGER.debug("open cover")
-        try:
-            await self._coord.api.activate_scene(2)
-            self._attr_current_cover_position = 100
-        except TimeoutError:
-            pass
+        await self._coord.api.set_position(OPEN_POSITION)
 
     async def async_close_cover(self, **kwargs: Any) -> None:
         """Close the cover tilt."""
         LOGGER.debug("close cover")
-        try:
-            await self._coord.api.activate_scene(3)
-            self._attr_current_cover_position = 0
-        except TimeoutError:
-            pass
+        await self._coord.api.set_position(CLOSED_POSITION)
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
         """Stop the cover."""
         LOGGER.debug("stop cover")
+        await self._coord.api.stop()

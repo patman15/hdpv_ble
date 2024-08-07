@@ -2,6 +2,8 @@
 
 import logging
 
+from bleak.uuids import normalize_uuid_str
+
 # from homeassistant.const import (  # noqa: F401
 #     ATTR_BATTERY_CHARGING,
 #     ATTR_BATTERY_LEVEL,
@@ -12,10 +14,9 @@ import logging
 
 DOMAIN = "hunterdouglas_powerview_ble"
 LOGGER = logging.getLogger(__package__)
-UPDATE_INTERVAL = 30  # in seconds
-UUID = "0000fdc1-0000-1000-8000-00805f9b34fb"
+UUID = normalize_uuid_str("fdc1")
 MFCT_ID = 2073
+TIMEOUT = 15
 
 # attributes (do not change)
 ATTR_RSSI = "rssi"
-

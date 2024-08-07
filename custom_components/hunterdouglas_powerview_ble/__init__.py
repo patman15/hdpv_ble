@@ -9,9 +9,10 @@ from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
 from .const import DOMAIN, LOGGER
 from .coordinator import PVCoordinator
 
-PLATFORMS: list[Platform] = [Platform.COVER]
+PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.COVER, Platform.SENSOR]
 
 type ConfigEntryType = ConfigEntry[PVCoordinator]
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntryType) -> bool:
     """Set up BT Battery Management System from a config entry."""
@@ -29,18 +30,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntryType) -> bool
             f"Could not find PowerView device ({entry.unique_id}) via Bluetooth"
         )
 
-    coordinator = PVCoordinator(hass, ble_device)
-    # Query the device the first time, initialise coordinator.data
-    try:
-        await coordinator.async_config_entry_first_refresh()
-    except ConfigEntryNotReady:
-        # Ignore, e.g. timeouts, to gracefully handle connection issues
-        LOGGER.warning("Failed to initialize PowerView device %s, continuing", ble_device.name)
+    coordinator = PVCoordinator(hass, ble_device, entry.data.copy())
 
     # Insert the coordinator in the global registry
     hass.data.setdefault(DOMAIN, {})
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    entry.async_on_unload(coordinator.async_start())
     return True
 
 
@@ -52,7 +48,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntryType) -> boo
     return unload_ok
 
 
-async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntryType) -> bool:
+async def async_migrate_entry(
+    _hass: HomeAssistant, config_entry: ConfigEntryType
+) -> bool:
     """Migrate old entry."""
 
     if config_entry.version > 1:
