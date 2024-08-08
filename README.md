@@ -51,11 +51,11 @@ Installation can be done using [HACS](https://hacs.xyz/) by [adding a custom rep
 ### Manual
 1. Using the tool of choice open the directory (folder) for your HA configuration (where you find `configuration.yaml`).
 1. If you do not have a `custom_components` directory (folder) there, you need to create it.
-1. In the `custom_components` directory (folder) create a new folder called `bms_ble`.
-1. Download _all_ the files from the `custom_components/bms_ble/` directory (folder) in this repository.
+1. In the `custom_components` directory (folder) create a new folder called `hunterdouglas_powerview_ble`.
+1. Download _all_ the files from the `custom_components/hunterdouglas_powerview_ble/` directory (folder) in this repository.
 1. Place the files you downloaded in the new directory (folder) you created.
 1. Restart Home Assistant
-1. In the HA UI go to "Configuration" -> "Integrations" click "+" and search for "BLE Battery Management"
+1. In the HA UI go to "Configuration" -> "Integrations" click "+" and search for "Hunter Douglas PowerView (BLE)"
 
 
 ## Outlook
@@ -70,7 +70,7 @@ In case you have severe troubles,
 - please enable the debug protocol for the integration,
 - reproduce the issue,
 - disable the log (Home Assistant will prompt you to download the log), and finally
-- [open an issue]([https://github.com/patman15/BMS_BLE-HA/issues](https://github.com/patman15/hdpv_ble/issues/new?assignees=&labels=Bug&projects=&template=bug.yml)) with a good description of what happened and attach the log.
+- [open an issue](https://github.com/patman15/hdpv_ble/issues/new?assignees=&labels=Bug&projects=&template=bug.yml) with a good description of what happened and attach the log.
 
 [license-shield]: https://img.shields.io/github/license/patman15/hdpv_ble.svg?style=for-the-badge
 [releases-shield]: https://img.shields.io/github/release/patman15/hdpv_ble.svg?style=for-the-badge
