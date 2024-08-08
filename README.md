@@ -23,7 +23,7 @@ Type* | Description
 4  | Roman
 5  | Bottom Up
 6  | Duette
-10 | Duette and Applause SkyLift",
+10 | Duette and Applause SkyLift
 19 | Provenance Woven Wood
 31, 32, 84 | Vignette
 42 | M25T Roller Blind
