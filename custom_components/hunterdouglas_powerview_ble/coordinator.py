@@ -1,5 +1,6 @@
 """Home Assistant coordinator for Hunter Douglas PowerView (BLE) integration."""
 
+import asyncio
 from typing import Any
 
 from bleak.backends.device import BLEDevice
@@ -13,7 +14,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
 
 from .api import SHADE_TYPE, PowerViewBLE
-from .const import ATTR_RSSI, DOMAIN, LOGGER
+from .const import ATTR_RSSI, DOMAIN, HOME_KEY, LOGGER
 
 
 class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
@@ -25,10 +26,11 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
         """Initialize BMS data coordinator."""
         assert ble_device.name is not None
         self._mac = ble_device.address
-        self.api = PowerViewBLE(ble_device)
+        self.api = PowerViewBLE(ble_device, HOME_KEY)
         self.data: dict[str, int | float | bool] = {}
         self._manuf_dat = data.get("manufacturer_data")
         self.dev_details: dict[str, str] = {}
+        self._dev_info_task: asyncio.Task | None = None
 
         LOGGER.debug(
             "Initializing coordinator for %s (%s)",
@@ -45,11 +47,14 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
     async def _get_device_info(self) -> None:
         self.dev_details = await self.api.query_dev_info()
 
-
     @property
     def device_info(self) -> DeviceInfo:
         """Return detailed device information for GUI."""
         LOGGER.debug("device_info, %s", self.dev_details)
+        if self._dev_info_task is None or not self._dev_info_task.done:
+            self._dev_info_task = self.hass.async_create_task(
+                self._get_device_info(), "query_device_details", False
+            )
         return DeviceInfo(
             identifiers={
                 (DOMAIN, self.name),
@@ -72,6 +77,11 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
             sw_version=self.dev_details.get("sw_rev"),
             hw_version=self.dev_details.get("hw_rev"),
         )
+
+    @property
+    def device_present(self) -> bool:
+        """Check if a device is present."""
+        return bluetooth.async_address_present(self.hass, self._mac, connectable=True)
 
     @callback
     def _async_handle_bluetooth_event(

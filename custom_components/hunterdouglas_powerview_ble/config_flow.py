@@ -16,7 +16,8 @@ from homeassistant.const import CONF_ADDRESS
 # from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig
 
-from .const import DOMAIN, LOGGER, MFCT_ID, UUID
+from .api import UUID_COV_SERVICE as UUID
+from .const import DOMAIN, LOGGER, MFCT_ID
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):

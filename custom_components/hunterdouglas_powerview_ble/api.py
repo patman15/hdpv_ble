@@ -4,20 +4,28 @@ import asyncio
 from dataclasses import dataclass
 from enum import Enum
 import time
+from typing import Final
 
 from bleak import BleakClient
 from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
 from bleak.uuids import normalize_uuid_str
+from bleak_retry_connector import establish_connection
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from homeassistant.components.cover import ATTR_CURRENT_POSITION
 
-from .const import LOGGER, TIMEOUT, UUID
+from .const import LOGGER, TIMEOUT
 
-ATTR_ACTIVITY = "activity"
+UUID_COV_SERVICE: Final = normalize_uuid_str("fdc1")
+UUID_TX: Final = "cafe1001-c0ff-ee01-8000-a110ca7ab1e0"
+UUID_DEV_SERVICE: Final = normalize_uuid_str("180a")
+UUID_BAT_SERVICE: Final = normalize_uuid_str("180f")
+
+ATTR_ACTIVITY: Final = "activity"
 
 
-SHADE_TYPE: dict[int, str] = {
+SHADE_TYPE: Final[dict[int, str]] = {
     1: "Designer Roller",
     4: "Roman",
     5: "Bottom Up",
@@ -33,10 +41,10 @@ SHADE_TYPE: dict[int, str] = {
     84: "Vignette",
 }
 
-OPEN_POSITION = 100
-CLOSED_POSITION = 0
+OPEN_POSITION: Final = 100
+CLOSED_POSITION: Final = 0
 
-POWER_LEVELS: dict[int, int] = {
+POWER_LEVELS: Final[dict[int, int]] = {
     4: 100,  # 4 is hardwired
     3: 100,  # 3 = 100% to 51% power remaining
     2: 50,  # 2 = 50% to 21% power remaining
@@ -69,20 +77,24 @@ class DeviceInfo:
 class PowerViewBLE:
     """Class to handle connection to PowerView remote device."""
 
-    UUID_COV_SERVICE = UUID
-    UUID_TX = "cafe1001-c0ff-ee01-8000-a110ca7ab1e0"
-    UUID_DEV_SERVICE = normalize_uuid_str("180a")
-    UUID_BAT_SERVICE = normalize_uuid_str("180f")
-
-    def __init__(self, ble_device: BLEDevice) -> None:
+    def __init__(self, ble_device: BLEDevice, home_key: bytes = b"") -> None:
         """Initialize device API via Bluetooth."""
-        self._ble_device: BLEDevice = ble_device
-        self.name = self._ble_device.name
-        self.seqcnt: int = 1
+        self._ble_device: Final[BLEDevice] = ble_device
+        self.name: Final[str] = self._ble_device.name or "unknown"
+        self._seqcnt: int = 1
         self._client: BleakClient | None = None
         self._data_event = asyncio.Event()
         self._data: bytearray
         self._info: DeviceInfo = DeviceInfo()
+        # self._connect_lock = (
+        #     asyncio.Lock()
+        # )  # TODO: try get rid of (device_info vs. normal cmds)
+        self._cmd_lock = asyncio.Lock()
+        self._cipher: Final = (
+            Cipher(algorithms.AES(home_key), modes.CTR(bytearray(16)))
+            if len(home_key) == 16
+            else None
+        )
 
     async def _wait_event(self) -> None:
         await self._data_event.wait()
@@ -100,31 +112,41 @@ class PowerViewBLE:
 
     # general cmd: uint16_t cmd, uint8_t seqID, uint8_t data_len
     async def _cmd(self, cmd: ShadeCmd, data: bytearray) -> None:
-        try:
-            await self._connect()
-            assert self._client is not None, "missing BT client"
-            tx_data = (
-                bytearray(
-                    int.to_bytes(cmd.value, 2, byteorder="little")
-                    + bytes([self.seqcnt, len(data)])
-                )
-                + data
-            )
-            self._data_event.clear()
-            LOGGER.debug("sending cmd: %s", tx_data)
-            await self._client.write_gatt_char(self.UUID_TX, tx_data, False)
-            self.seqcnt += 1
-            LOGGER.debug("waiting for response")
+        # if self._cmd_lock.locked():
+
+        #     return
+
+        async with self._cmd_lock:
             try:
-                await asyncio.wait_for(self._wait_event(), timeout=TIMEOUT)
-                self._verify_response(self._data, self.seqcnt - 1, cmd)
-            except TimeoutError as ex:
-                raise TimeoutError("device operation timed out") from ex
-            finally:
-                await self._client.disconnect()
-        except Exception as ex:
-            LOGGER.debug("Error: %s - %s", type(ex).__name__, ex)
-            raise
+                await self._connect()
+                assert self._client is not None, "missing BT client"
+                tx_data = (
+                    bytearray(
+                        int.to_bytes(cmd.value, 2, byteorder="little")
+                        + bytes([self._seqcnt, len(data)])
+                    )
+                    + data
+                )
+                if self._cipher is not None:
+                    enc = self._cipher.encryptor()
+                    tx_data = enc.update(tx_data) + enc.finalize()
+                self._data_event.clear()
+                LOGGER.debug("sending cmd: %s", tx_data)
+                await self._client.write_gatt_char(UUID_TX, tx_data, False)
+                self._seqcnt += 1
+                LOGGER.debug("waiting for response")
+                try:
+                    await asyncio.wait_for(
+                        self._wait_event(), timeout=TIMEOUT
+                    )  # TODO: how long to wait?!
+                    self._verify_response(self._data, self._seqcnt - 1, cmd)
+                except TimeoutError as ex:
+                    raise TimeoutError("Device did not send confirmation.") from ex
+                # finally:
+                #     await self._client.disconnect() # device disconnects itself
+            except Exception as ex:
+                LOGGER.debug("Error: %s - %s", type(ex).__name__, ex)
+                raise
 
     @staticmethod
     def dec_manufacturer_data(data: bytearray) -> list[tuple[str, float]]:
@@ -163,8 +185,8 @@ class PowerViewBLE:
         await self._cmd(ShadeCmd.STOP, bytearray(b""))
 
     # uint8_t scene#, uint8_t unknown
-    # open: scene 2
-    # close: scene 3
+    # open: scene 2 (programmed by app?)
+    # close: scene 3 (programmed by app?)
     async def activate_scene(self, idx: int) -> None:
         """Activate stored scene."""
         LOGGER.debug("%s set scene #%i", self.name, idx)
@@ -173,8 +195,12 @@ class PowerViewBLE:
             bytearray(int.to_bytes(idx, 1, byteorder="little") + bytes([0xA2])),
         )
 
-    def _verify_response(self, data: bytearray, seq_nr: int, cmd: ShadeCmd) -> bool:
+    def _verify_response(self, input: bytearray, seq_nr: int, cmd: ShadeCmd) -> bool:
         """Verify shade response data."""
+        data = input
+        if self._cipher is not None:
+            dec = self._cipher.decryptor()
+            data = dec.update(input) + dec.finalize()
         if len(data) < 4:
             LOGGER.warning("Message too short")
             return False
@@ -195,7 +221,7 @@ class PowerViewBLE:
     async def query_dev_info(self) -> dict[str, str]:
         """Return detailed device information."""
         data: dict[str, str] = {}
-        uuids: dict[str, str] = {
+        uuids: Final[dict[str, str]] = {
             "manufacturer": "2a29",
             "model": "2a24",
             "serial_nr": "2a25",
@@ -236,26 +262,40 @@ class PowerViewBLE:
     async def _connect(self) -> None:
         """Connect to the device and setup notification if not connected."""
 
-        if not self.is_connected:
-            LOGGER.debug("Connecting %s", self.name)
-            start = time.time()
-            if not isinstance(self._client, BleakClient):
-                self._client = BleakClient(
-                    self._ble_device,
-                    disconnected_callback=self._on_disconnect,
-                    services=[
-                        self.UUID_COV_SERVICE,
-                        # self.UUID_DEV_SERVICE,
-                        # self.UUID_BAT_SERVICE,
-                    ],
-                )
-            await self._client.connect()  # dangerous_use_bleak_cache = True
-            LOGGER.debug("\tconnect took %i", time.time() - start)
-            await self._client.start_notify(self.UUID_TX, self._notification_handler)
-            # await self._query_dev_info()
+        LOGGER.debug("Connecting %s", self.name)
 
-        else:
+        if self.is_connected:
             LOGGER.debug("%s already connected", self.name)
+            return
+
+        start = time.time()
+        # if not isinstance(self._client, BleakClient):
+            # self._client = BleakClient(
+            #     self._ble_device,
+            #     disconnected_callback=self._on_disconnect,
+            #     services=[
+            #         UUID_COV_SERVICE,
+            #         # self.UUID_DEV_SERVICE,
+            #         # self.UUID_BAT_SERVICE,
+            #     ],
+            # )
+        self._client = await establish_connection(
+            BleakClient,
+            self._ble_device,
+            self.name,
+            disconnected_callback=self._on_disconnect,
+            services=[
+                UUID_COV_SERVICE,
+                # self.UUID_DEV_SERVICE,
+                # self.UUID_BAT_SERVICE,
+            ],
+        )
+        await self._client.start_notify(UUID_TX, self._notification_handler)
+        # self._client.connect()  # dangerous_use_bleak_cache = True
+
+        LOGGER.debug("\tconnect took %i", time.time() - start)
+
+        # await self._query_dev_info()
 
     async def _disconnect(self) -> None:
         """Disconnect the device and stop notifications."""

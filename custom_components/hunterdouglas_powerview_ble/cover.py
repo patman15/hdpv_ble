@@ -14,11 +14,12 @@ from homeassistant.components.cover import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo, format_mac
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .api import CLOSED_POSITION, OPEN_POSITION
-from .const import DOMAIN, LOGGER
+from .const import DOMAIN, HOME_KEY, LOGGER
 from .coordinator import PVCoordinator
 
 
@@ -82,7 +83,7 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
     @property
     def supported_features(self) -> CoverEntityFeature:  # type: ignore[reportIncompatibleVariableOverride]
         """Flag supported features, disable control if encryption is needed."""
-        if self._coord.data.get("home_id") or self._coord.data.get("battery_charging"):
+        if (self._coord.data.get("home_id") and len(HOME_KEY) != 16) or self._coord.data.get("battery_charging"):
             return CoverEntityFeature(0)
 
         return super().supported_features
@@ -103,19 +104,42 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
         self._target_position = kwargs.get(ATTR_POSITION, None)
         if self._target_position is not None:
             LOGGER.debug("set cover to position %i", self._target_position)
-            await self._coord.api.set_position(self._target_position)
+            if not self._coord.device_present:
+                LOGGER.debug("device not present")
+                return
+            try:
+                await self._coord.api.set_position(self._target_position)
+            except Exception as err:
+                raise HomeAssistantError(
+                    f"Failed to move cover '{self.name}' to {self._target_position}%: {err}"
+                ) from err
 
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Open the cover."""
         LOGGER.debug("open cover")
-        await self._coord.api.set_position(OPEN_POSITION)
+        try:
+            await self._coord.api.set_position(OPEN_POSITION)
+        except Exception as err:
+            raise HomeAssistantError(
+                f"Failed open cover '{self.name}': {err}"
+            ) from err
 
     async def async_close_cover(self, **kwargs: Any) -> None:
         """Close the cover tilt."""
         LOGGER.debug("close cover")
-        await self._coord.api.set_position(CLOSED_POSITION)
+        try:
+            await self._coord.api.set_position(CLOSED_POSITION)
+        except Exception as err:
+            raise HomeAssistantError(
+                f"Failed close cover '{self.name}': {err}"
+            ) from err
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
         """Stop the cover."""
         LOGGER.debug("stop cover")
-        await self._coord.api.stop()
+        try:
+            await self._coord.api.stop()
+        except Exception as err:
+            raise HomeAssistantError(
+                f"Failed stop cover '{self.name}': {err}"
+            ) from err
