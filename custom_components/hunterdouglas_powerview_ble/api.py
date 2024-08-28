@@ -10,7 +10,7 @@ from bleak import BleakClient
 from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
 from bleak.uuids import normalize_uuid_str
-from bleak_retry_connector import establish_connection
+from bleak_retry_connector import close_stale_connections, establish_connection
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from homeassistant.components.cover import ATTR_CURRENT_POSITION
@@ -89,7 +89,8 @@ class PowerViewBLE:
         # self._connect_lock = (
         #     asyncio.Lock()
         # )  # TODO: try get rid of (device_info vs. normal cmds)
-        self._cmd_lock = asyncio.Lock()
+        self._cmd_lock: Final = asyncio.Lock()
+        self._cmd_next = None
         self._cipher: Final = (
             Cipher(algorithms.AES(home_key), modes.CTR(bytearray(16)))
             if len(home_key) == 16
@@ -112,17 +113,19 @@ class PowerViewBLE:
 
     # general cmd: uint16_t cmd, uint8_t seqID, uint8_t data_len
     async def _cmd(self, cmd: ShadeCmd, data: bytearray) -> None:
-        # if self._cmd_lock.locked():
-
-        #     return
+        self._cmd_next = cmd
+        if self._cmd_lock.locked():
+            LOGGER.debug("%s: device busy, queing %s", self.name, cmd.name)
+            return
 
         async with self._cmd_lock:
             try:
                 await self._connect()
                 assert self._client is not None, "missing BT client"
+                cmd_run = self._cmd_next
                 tx_data = (
                     bytearray(
-                        int.to_bytes(cmd.value, 2, byteorder="little")
+                        int.to_bytes(cmd_run.value, 2, byteorder="little")
                         + bytes([self._seqcnt, len(data)])
                     )
                     + data
@@ -136,10 +139,8 @@ class PowerViewBLE:
                 self._seqcnt += 1
                 LOGGER.debug("waiting for response")
                 try:
-                    await asyncio.wait_for(
-                        self._wait_event(), timeout=TIMEOUT
-                    )  # TODO: how long to wait?!
-                    self._verify_response(self._data, self._seqcnt - 1, cmd)
+                    await asyncio.wait_for(self._wait_event(), timeout=TIMEOUT)
+                    self._verify_response(self._data, self._seqcnt - 1, cmd_run)
                 except TimeoutError as ex:
                     raise TimeoutError("Device did not send confirmation.") from ex
                 # finally:
@@ -269,16 +270,8 @@ class PowerViewBLE:
             return
 
         start = time.time()
-        # if not isinstance(self._client, BleakClient):
-            # self._client = BleakClient(
-            #     self._ble_device,
-            #     disconnected_callback=self._on_disconnect,
-            #     services=[
-            #         UUID_COV_SERVICE,
-            #         # self.UUID_DEV_SERVICE,
-            #         # self.UUID_BAT_SERVICE,
-            #     ],
-            # )
+        await close_stale_connections(self._ble_device)
+        LOGGER.debug("%s: closing stale connections took %is", self.name, time.time()-start)
         self._client = await establish_connection(
             BleakClient,
             self._ble_device,
@@ -291,9 +284,8 @@ class PowerViewBLE:
             ],
         )
         await self._client.start_notify(UUID_TX, self._notification_handler)
-        # self._client.connect()  # dangerous_use_bleak_cache = True
 
-        LOGGER.debug("\tconnect took %i", time.time() - start)
+        LOGGER.debug("\tconnect took %is", time.time() - start)
 
         # await self._query_dev_info()
 
