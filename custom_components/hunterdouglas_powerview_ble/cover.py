@@ -1,6 +1,8 @@
 """Hunter Douglas Powerview cover."""
 
-from typing import Any
+from typing import Any, Final
+
+from bleak.exc import BleakError
 
 from homeassistant.components.bluetooth.passive_update_coordinator import (
     PassiveBluetoothCoordinatorEntity,
@@ -54,7 +56,6 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
         self._attr_name = CoverDeviceClass.SHADE
         self._coord = coordinator
         self._attr_device_info = self._coord.device_info
-        self._target_position: int | None = None
         self._attr_unique_id = (
             f"{DOMAIN}_{format_mac(self._coord.address)}_{CoverDeviceClass.SHADE}"
         )
@@ -83,7 +84,9 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
     @property
     def supported_features(self) -> CoverEntityFeature:  # type: ignore[reportIncompatibleVariableOverride]
         """Flag supported features, disable control if encryption is needed."""
-        if (self._coord.data.get("home_id") and len(HOME_KEY) != 16) or self._coord.data.get("battery_charging"):
+        if (
+            self._coord.data.get("home_id") and len(HOME_KEY) != 16
+        ) or self._coord.data.get("battery_charging"):
             return CoverEntityFeature(0)
 
         return super().supported_features
@@ -94,52 +97,49 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
 
         None is unknown, 0 is closed, 100 is fully open.
         """
-        if ATTR_CURRENT_POSITION in self._coord.data:
-            pos = self._coord.data.get(ATTR_CURRENT_POSITION)
-            return int(pos) if pos is not None else None
-        return None
+        pos = self._coord.data.get(ATTR_CURRENT_POSITION)
+        return round(pos) if pos is not None else None
 
     async def async_set_cover_position(self, **kwargs: Any) -> None:
         """Move the cover to a specific position."""
-        self._target_position = kwargs.get(ATTR_POSITION, None)
-        if self._target_position is not None:
-            LOGGER.debug("set cover to position %i", self._target_position)
-            if not self._coord.device_present:
-                LOGGER.debug("device not present")
+        target_position: Final[int | None] = kwargs.get(ATTR_POSITION)
+        if target_position is not None:
+            LOGGER.debug("set cover to position %i", target_position)
+            if self.current_cover_position == round(target_position) and not (
+                self.is_closing or self.is_opening
+            ):
                 return
             try:
-                await self._coord.api.set_position(self._target_position)
-            except Exception as err:
-                raise HomeAssistantError(
-                    f"Failed to move cover '{self.name}' to {self._target_position}%: {err}"
-                ) from err
+                await self._coord.api.set_position(round(target_position))
+            except BleakError as err:
+                LOGGER.error(
+                    f"Failed to move cover '{self.name}' to {target_position}%: {err}"
+                )
 
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Open the cover."""
         LOGGER.debug("open cover")
+        if self.current_cover_position == OPEN_POSITION:
+            return
         try:
-            await self._coord.api.set_position(OPEN_POSITION)
-        except Exception as err:
-            raise HomeAssistantError(
-                f"Failed open cover '{self.name}': {err}"
-            ) from err
+            await self._coord.api.open()
+        except BleakError as err:
+            LOGGER.error(f"Failed to open cover '{self.name}': {err}")
 
     async def async_close_cover(self, **kwargs: Any) -> None:
         """Close the cover tilt."""
         LOGGER.debug("close cover")
+        if self.current_cover_position == CLOSED_POSITION:
+            return
         try:
-            await self._coord.api.set_position(CLOSED_POSITION)
-        except Exception as err:
-            raise HomeAssistantError(
-                f"Failed close cover '{self.name}': {err}"
-            ) from err
+            await self._coord.api.close()
+        except BleakError as err:
+            LOGGER.error(f"Failed to close cover '{self.name}': {err}")
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
         """Stop the cover."""
         LOGGER.debug("stop cover")
         try:
             await self._coord.api.stop()
-        except Exception as err:
-            raise HomeAssistantError(
-                f"Failed stop cover '{self.name}': {err}"
-            ) from err
+        except BleakError as err:
+            LOGGER.error(f"Failed to stop cover '{self.name}': {err}")
