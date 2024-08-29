@@ -16,7 +16,7 @@ from typing import Final
 DOMAIN: Final = "hunterdouglas_powerview_ble"
 LOGGER: Final = logging.getLogger(__package__)
 MFCT_ID: Final = 2073
-TIMEOUT: Final = 15
+TIMEOUT: Final = 5
 HOME_KEY: Final = b""
 
 
