@@ -1,6 +1,5 @@
 """Home Assistant coordinator for Hunter Douglas PowerView (BLE) integration."""
 
-import asyncio
 from typing import Any
 
 from bleak.backends.device import BLEDevice
@@ -30,7 +29,6 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
         self.data: dict[str, int | float | bool] = {}
         self._manuf_dat = data.get("manufacturer_data")
         self.dev_details: dict[str, str] = {}
-        self._dev_info_task: asyncio.Task | None = None
 
         LOGGER.debug(
             "Initializing coordinator for %s (%s)",
@@ -44,17 +42,15 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
             bluetooth.BluetoothScanningMode.ACTIVE,
         )
 
-    async def _get_device_info(self) -> None:
-        self.dev_details = await self.api.query_dev_info()
+    async def query_dev_info(self) -> None:
+        """Receive detailed information from device."""
+        LOGGER.debug("%s: querying device info", self.name)
+        self.dev_details.update(await self.api.query_dev_info())
 
     @property
     def device_info(self) -> DeviceInfo:
         """Return detailed device information for GUI."""
-        LOGGER.debug("device_info, %s", self.dev_details)
-        if self._dev_info_task is None or not self._dev_info_task.done:
-            self._dev_info_task = self.hass.async_create_task(
-                self._get_device_info(), "query_device_details", False
-            )
+        LOGGER.debug("%s: device_info, %s", self.name, self.dev_details)
         return DeviceInfo(
             identifiers={
                 (DOMAIN, self.name),

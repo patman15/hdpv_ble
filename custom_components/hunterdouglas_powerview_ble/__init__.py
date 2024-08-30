@@ -1,4 +1,10 @@
-"""The Hunter Douglas PowerView (BLE) integration."""
+"""The Hunter Douglas PowerView (BLE) integration.
+
+@author: patman15
+@license: Apache-2.0 license
+"""
+
+from bleak.exc import BleakError
 
 from homeassistant.components.bluetooth import async_ble_device_from_address
 from homeassistant.config_entries import ConfigEntry
@@ -31,6 +37,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntryType) -> bool
         )
 
     coordinator = PVCoordinator(hass, ble_device, entry.data.copy())
+    try:
+        await coordinator.query_dev_info()
+    except BleakError as err:
+        raise ConfigEntryNotReady("Unable to query device info.") from err
 
     # Insert the coordinator in the global registry
     hass.data.setdefault(DOMAIN, {})

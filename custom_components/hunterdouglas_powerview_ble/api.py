@@ -62,7 +62,7 @@ class ShadeCmd(Enum):
 
 
 @dataclass
-class DeviceInfo:
+class PVDeviceInfo:
     """Dataclass holding available PowerView device information."""
 
     manufacturer: str = ""
@@ -85,10 +85,10 @@ class PowerViewBLE:
         self._client: BleakClient | None = None
         self._data_event = asyncio.Event()
         self._data: bytearray
-        self._info: DeviceInfo = DeviceInfo()
         # self._connect_lock = (
         #     asyncio.Lock()
         # )  # TODO: try get rid of (device_info vs. normal cmds)
+        self._info: PVDeviceInfo = PVDeviceInfo()
         self._cmd_lock: Final = asyncio.Lock()
         self._cmd_next = None
         self._cipher: Final = (
@@ -102,7 +102,6 @@ class PowerViewBLE:
         self._data_event.clear()
 
     @property
-    def info(self) -> DeviceInfo:
         """Return device information, e.g. SW version."""
         return self._info
 
@@ -159,8 +158,12 @@ class PowerViewBLE:
             LOGGER.debug("not a V2 record!")
             return []
         pos = int.from_bytes(data[3:5], byteorder="little")
+        pos2 = ((int(data[5]) << 4) + (int(data[4]) >> 4))
         return [
             (ATTR_CURRENT_POSITION, ((pos >> 2) / 10)),
+            ("position2", pos2 >> 2),
+            ("position3", int(data[6])),
+            ("tilt", int(data[7])),
             ("home_id", int.from_bytes(data[0:2], byteorder="little")),
             ("type_id", int.from_bytes(data[2:3])),
             ("is_opening", bool(pos & 0x3 == 0x2)),
