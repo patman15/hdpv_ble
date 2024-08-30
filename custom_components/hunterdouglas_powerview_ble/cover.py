@@ -16,7 +16,6 @@ from homeassistant.components.cover import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo, format_mac
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -56,6 +55,9 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
         self._attr_name = CoverDeviceClass.SHADE
         self._coord = coordinator
         self._attr_device_info = self._coord.device_info
+        self._target_position: int | None = round(
+            self._coord.data.get(ATTR_CURRENT_POSITION, OPEN_POSITION)
+        )
         self._attr_unique_id = (
             f"{DOMAIN}_{format_mac(self._coord.address)}_{CoverDeviceClass.SHADE}"
         )
@@ -69,12 +71,22 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
     @property
     def is_opening(self) -> bool | None:  # type: ignore[reportIncompatibleVariableOverride]
         """Return if the cover is opening or not."""
-        return bool(self._coord.data.get("is_opening"))
+        return bool(self._coord.data.get("is_opening")) or (
+            isinstance(self._target_position, int)
+            and isinstance(self.current_cover_position, int)
+            and self._target_position > self.current_cover_position
+            and self._coord.api.is_connected
+        )
 
     @property
     def is_closing(self) -> bool | None:  # type: ignore[reportIncompatibleVariableOverride]
         """Return if the cover is closing or not."""
-        return bool(self._coord.data.get("is_closing"))
+        return bool(self._coord.data.get("is_closing")) or (
+            isinstance(self._target_position, int)
+            and isinstance(self.current_cover_position, int)
+            and self._target_position < self.current_cover_position
+            and self._coord.api.is_connected
+        )
 
     @property
     def is_closed(self) -> bool:  # type: ignore[reportIncompatibleVariableOverride]
@@ -97,24 +109,29 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
 
         None is unknown, 0 is closed, 100 is fully open.
         """
-        pos = self._coord.data.get(ATTR_CURRENT_POSITION)
+        pos: Final = self._coord.data.get(ATTR_CURRENT_POSITION)
         return round(pos) if pos is not None else None
 
     async def async_set_cover_position(self, **kwargs: Any) -> None:
         """Move the cover to a specific position."""
-        target_position: Final[int | None] = kwargs.get(ATTR_POSITION)
+        target_position: Final = kwargs.get(ATTR_POSITION)
         if target_position is not None:
-            LOGGER.debug("set cover to position %i", target_position)
+            LOGGER.debug("set cover to position %f", target_position)
             if self.current_cover_position == round(target_position) and not (
                 self.is_closing or self.is_opening
             ):
                 return
+            self._target_position = round(target_position)
             try:
                 await self._coord.api.set_position(round(target_position))
+                self.async_write_ha_state()
             except BleakError as err:
                 LOGGER.error(
                     f"Failed to move cover '{self.name}' to {target_position}%: {err}"
                 )
+
+    def _reset_target_position(self) -> None:
+        self._target_position = None
 
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Open the cover."""
@@ -122,9 +139,12 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
         if self.current_cover_position == OPEN_POSITION:
             return
         try:
+            self._target_position = OPEN_POSITION
             await self._coord.api.open()
+            self.async_write_ha_state()
         except BleakError as err:
             LOGGER.error(f"Failed to open cover '{self.name}': {err}")
+            self._reset_target_position()
 
     async def async_close_cover(self, **kwargs: Any) -> None:
         """Close the cover tilt."""
@@ -132,14 +152,19 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
         if self.current_cover_position == CLOSED_POSITION:
             return
         try:
+            self._target_position = CLOSED_POSITION
             await self._coord.api.close()
+            self.async_write_ha_state()
         except BleakError as err:
             LOGGER.error(f"Failed to close cover '{self.name}': {err}")
+            self._reset_target_position()
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
         """Stop the cover."""
         LOGGER.debug("stop cover")
         try:
             await self._coord.api.stop()
+            self._reset_target_position()
+            self.async_write_ha_state()
         except BleakError as err:
             LOGGER.error(f"Failed to stop cover '{self.name}': {err}")

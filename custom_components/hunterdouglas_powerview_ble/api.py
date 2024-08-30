@@ -85,9 +85,6 @@ class PowerViewBLE:
         self._client: BleakClient | None = None
         self._data_event = asyncio.Event()
         self._data: bytearray
-        # self._connect_lock = (
-        #     asyncio.Lock()
-        # )  # TODO: try get rid of (device_info vs. normal cmds)
         self._info: PVDeviceInfo = PVDeviceInfo()
         self._cmd_lock: Final = asyncio.Lock()
         self._cmd_next = None
@@ -102,6 +99,7 @@ class PowerViewBLE:
         self._data_event.clear()
 
     @property
+    def info(self) -> PVDeviceInfo:
         """Return device information, e.g. SW version."""
         return self._info
 
@@ -112,7 +110,7 @@ class PowerViewBLE:
 
     # general cmd: uint16_t cmd, uint8_t seqID, uint8_t data_len
     async def _cmd(
-        self, cmd: tuple[ShadeCmd, bytearray], disconnect: bool = False
+        self, cmd: tuple[ShadeCmd, bytearray], disconnect: bool = True
     ) -> None:
         self._cmd_next = cmd
         if self._cmd_lock.locked():
@@ -175,7 +173,9 @@ class PowerViewBLE:
         ]
 
     # position cmd: uint16_t pos1, uint16_t pos2, uint16_t pos3, uint16_t tilt, uint8_t velocity
-    async def _set_position(self, value: int, disconnect: bool = False) -> None:
+    async def set_position(self, value: int, disconnect: bool = True) -> None:
+        """Set position of device."""
+        LOGGER.debug("%s setting position to %i", self.name, value)
         await self._cmd(
             (
                 ShadeCmd.SET_POSITION,
@@ -187,15 +187,10 @@ class PowerViewBLE:
             disconnect,
         )
 
-    async def set_position(self, value: int) -> None:
-        """Set position of device."""
-        LOGGER.debug("%s setting position to %i", self.name, value)
-        await self._set_position(value, disconnect=True)
-
     async def open(self) -> None:
         """Fully open cover."""
         LOGGER.debug("%s open", self.name)
-        await self._set_position(OPEN_POSITION)
+        await self.set_position(OPEN_POSITION, disconnect=False)
 
     async def stop(self) -> None:
         """Stop device movement."""
@@ -205,7 +200,7 @@ class PowerViewBLE:
     async def close(self) -> None:
         """Fully close cover."""
         LOGGER.debug("%s close", self.name)
-        await self._set_position(CLOSED_POSITION)
+        await self.set_position(CLOSED_POSITION, disconnect=False)
 
     # uint8_t scene#, uint8_t unknown
     # open: scene 2
@@ -257,24 +252,22 @@ class PowerViewBLE:
             "sw_rev": "2a28",
         }
 
-        try:
-            await self._connect()
-            assert self._client is not None
+        async with self._cmd_lock:
+            try:
+                await self._connect()
+                assert self._client is not None
 
-            for key, uuid in uuids.items():
-                LOGGER.debug("querying %s(%s)", key, uuid)
-                data[key] = (
-                    (await self._client.read_gatt_char(normalize_uuid_str(uuid)))
-                    .copy()
-                    .decode("UTF-8")
-                )
-        except BleakError as ex:
-            LOGGER.debug("%s error: %s", self.name, ex)
-            return {}
-        finally:
-            await self._disconnect()
+                for key, uuid in uuids.items():
+                    LOGGER.debug("querying %s(%s)", key, uuid)
+                    data[key] = (
+                        (await self._client.read_gatt_char(normalize_uuid_str(uuid)))
+                        .copy()
+                        .decode("UTF-8")
+                    )
+            finally:
+                await self._disconnect()
         LOGGER.debug("%s device data: %s", self.name, data)
-        return data
+        return data.copy()
 
     def _on_disconnect(self, client: BleakClient) -> None:
         """Disconnect callback function."""
