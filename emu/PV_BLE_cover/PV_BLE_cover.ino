@@ -45,30 +45,20 @@ struct position {
   uint8_t velocity;
 };
 
+struct notification {
+    uint8_t *data;
+    BLECharacteristic *characteristic;
+};
+
 BLECharacteristic *pCharacteristic_cover, *pCharacteristic_fw, *pCharacteristic_unknown, *pCharacteristic_bat;
 BLEServer *pServer = NULL;
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
+struct notification rx_data;
+volatile bool data_available = false;
+uint8_t buffer[20];
 
-void Serialprintln(const char* input...) {
-  va_list args;
-  va_start(args, input);
-  for(const char* i=input; *i!=0; ++i) {
-    if(*i!='%') { Serial.print(*i); continue; }
-    switch(*(++i)) {
-      case '%': Serial.print('%'); break;
-      case 's': Serial.print(va_arg(args, char*)); break;
-      case 'd': Serial.print(va_arg(args, int), DEC); break;
-      case 'b': Serial.print(va_arg(args, int), BIN); break;
-      case 'x': Serial.print(va_arg(args, int), HEX); break;
-      case 'f': Serial.print(va_arg(args, double), 2); break;
-    }
-  }
-  Serial.println();
-  va_end(args);
-}
-
-const char* decode_cmd(uint16_t cmd) {
+const char* dec_cmd(uint16_t cmd) {
   switch(cmd) {
     case 0x01:
       return "set position";
@@ -106,27 +96,26 @@ class MyServerCallbacks: public BLEServerCallbacks {
     }
 
     void onMtuChanged(BLEServer* pServer, esp_ble_gatts_cb_param_t* param) {
-      Serialprintln("MTU changed: %d", pServer->getPeerMTU(pServer->getConnId()));
+      Serial.printf("MTU changed: %d\n", pServer->getPeerMTU(pServer->getConnId()));
     }
 };
 
-class coverCallbacks: public BLECharacteristicCallbacks {
-    void onWrite(BLECharacteristic *pCharacteristic) {
-    uint8_t *value = pCharacteristic->getData();
+void decode() {
+    Serial.printf("Cover write %s:\n\t", rx_data.characteristic->toString().c_str());
+    print_hex(rx_data.characteristic->getData(), rx_data.characteristic->getLength());
 
-    Serialprintln("Cover write %s:", pCharacteristic->toString().c_str());
-    print_hex(value, pCharacteristic->getLength());
+    if (rx_data.characteristic->getLength() < 4) return;
 
     struct header data;
-    memcpy((void *) &data, value, 4);
-    Serialprintln("SRV: %x, CMD %x, SEQ %x, LEN %x", data.serviceID, data.cmdID, data.sequence, data.data_len);
+    memcpy((void *) &data, rx_data.characteristic->getData(), 4);
+    Serial.printf("SRV: %x, CMD %x, SEQ %x, LEN %x\n", data.serviceID, data.cmdID, data.sequence, data.data_len);
 
     switch ((data.serviceID << 8) | data.cmdID) {
       case 0xF701:
         // set position
         struct position pos;
-        memcpy((void *) &pos, &value[4], data.data_len);
-        Serialprintln("\tset position\tpos1 %f%%, pos2 %d, pos3 %d, tilt %d, velocity %d", pos.pos1/100.0, pos.pos2, pos.pos3, pos.tilt, pos.velocity);
+        memcpy((void *) &pos, &rx_data.data[4], data.data_len);
+        Serial.printf("\tset position\tpos1 %f%%, pos2 %d, pos3 %d, tilt %d, velocity %d\n", pos.pos1/100.0, pos.pos2, pos.pos3, pos.tilt, pos.velocity);
         break;
       case 0xF7B8:
         // stop movement
@@ -134,30 +123,46 @@ class coverCallbacks: public BLECharacteristicCallbacks {
         break;
       case 0xF7BA:
         // activate scene
-        Serialprintln("\tactivate scene\tscene #%d", (uint16_t) value[4]);
+        Serial.printf("\tactivate scene\tscene #%d\n", (uint16_t) rx_data.data[4]);
         break;
       case 0xFA5B:
         // get scene
-        Serialprintln("\tget scene\tscene #%d", (uint16_t) value[4]);
+        Serial.printf("\tget scene\tscene #%d\n", (uint16_t) rx_data.data[4]);
         break;        
       case 0xFAEA:
         // Reset Scene Automations
         // FIXME! wrong return value!
-        Serialprintln("\treset scene automations\t");
-        uint8_t ret[]={0xFA, 0xEA, data.sequence, 0x1, 0x0};
-        Serial.print("ret: ");
-        print_hex(ret, 5);
-        pCharacteristic->setValue(ret, 5);
-        pCharacteristic->indicate();
+        const uint8_t ret_val[] = {0xEA, 0xEA, data.sequence, 0x1, 0x0}; 
+        Serial.println("\treset scene automations:");
+        memcpy(&buffer, ret_val, 5);
+        delay(100);
+        Serial.print("\t\tret value: ");
+        print_hex(buffer, 5);
+        rx_data.characteristic->setValue((uint8_t *) &buffer, 5);
+        rx_data.characteristic->notify();
         break;
     }
     Serial.println();
+
+}
+
+class coverCallbacks: public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *pCharacteristic) {
+    rx_data.characteristic = pCharacteristic;
+    data_available = true;
   }
 
   void onRead(BLECharacteristic *pCharacteristic) {
-      Serialprintln("Cover read: %s", pCharacteristic->toString().c_str());
-      Serial.println();      
-  }  
+      Serial.printf("Cover read: %s\n", pCharacteristic->toString().c_str());
+  }
+  
+  void onNotify(BLECharacteristic *pCharacteristic){
+    Serial.println("onNotify()");
+  } // not used
+  void onStatus(BLECharacteristic *pCharacteristic, Status s, uint32_t code){
+    Serial.println("onStatus()");
+  }; // not used
+
 };
 
 class batteryCallbacks: public BLECharacteristicCallbacks {
@@ -165,31 +170,42 @@ class batteryCallbacks: public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *pCharacteristic) {
     uint8_t *value = pCharacteristic->getData();
 
-    Serialprintln("Battery write: %s:", pCharacteristic->toString().c_str());     
+    Serial.printf("Battery write: %s:", pCharacteristic->toString().c_str());     
     print_hex(value, pCharacteristic->getLength());
     Serial.println();
   }    
 
   void onRead(BLECharacteristic *pCharacteristic) {
-      Serialprintln("Battery read: %s", pCharacteristic->toString().c_str());      
-      Serial.println();
+      Serial.printf("Battery read: %s\n", pCharacteristic->toString().c_str());      
   }
+
+  void onNotify(BLECharacteristic *pCharacteristic){
+    Serial.println("Battery onNotify()");
+  } // not used
+  void onStatus(BLECharacteristic *pCharacteristic, Status s, uint32_t code){
+    Serial.println("Battery onStatus()");
+  }; // not used  
 };
 
 class genericCallbacks: public BLECharacteristicCallbacks {
   
   void onWrite(BLECharacteristic *pCharacteristic) {
-    uint8_t *value = pCharacteristic->getData();
+    //uint8_t *value = pCharacteristic->getData();
 
-    Serialprintln("generic write %s:", pCharacteristic->toString().c_str());
-    print_hex(value, pCharacteristic->getLength());
-    Serial.println();    
+    Serial.printf("generic write %s:", pCharacteristic->toString().c_str());
+    //print_hex(value, pCharacteristic->getLength());
+    Serial.println();
   }    
 
   void onRead(BLECharacteristic *pCharacteristic) {
-      Serialprintln("generic read %s.", pCharacteristic->toString().c_str());
-      Serial.println();      
+      Serial.printf("generic read %s.\n", pCharacteristic->toString().c_str());
   }
+  void onNotify(BLECharacteristic *pCharacteristic){
+    Serial.println("generic onNotify()");
+  } // not used
+  void onStatus(BLECharacteristic *pCharacteristic, Status s, uint32_t code){
+    Serial.println("generic onStatus()");
+  }; // not used  
 };
 
 void setup() {
@@ -197,8 +213,6 @@ void setup() {
   Serial.println(NAME " initializing ...");
 
   BLEDevice::init(NAME);
-  Serialprintln("MTU: %d", BLEDevice::getMTU());
-
   // Create the BLE Server
   pServer = BLEDevice::createServer();
   pServer->setCallbacks(new MyServerCallbacks());
@@ -214,31 +228,31 @@ void setup() {
                     );
   pCharacteristic_cover->setCallbacks(new coverCallbacks());
   // Create a BLE Descriptor
-  BLEDescriptor *pDesc1 = new BLEDescriptor("2901", 10);
-  pDesc1->setValue("cover");
+  /* BLEDescriptor *pDesc1 = new BLEDescriptor("2901", 10);
+  pDesc1->setValue("cover");*/
+  //pCharacteristic_cover->addDescriptor(pDesc1);
   pCharacteristic_cover->addDescriptor(new BLE2902());
-  pCharacteristic_cover->addDescriptor(pDesc1);
+  
   
   pCharacteristic_unknown = pCovService->createCharacteristic(
                       XXX_CHAR_UUID,
-                      BLECharacteristic::PROPERTY_INDICATE |                      
+                      BLECharacteristic::PROPERTY_NOTIFY |                      
                       BLECharacteristic::PROPERTY_WRITE |
                       BLECharacteristic::PROPERTY_WRITE_NR                      
                     );
   pCharacteristic_unknown->setCallbacks(new genericCallbacks());
-
-
-  BLEService *pBatService = pServer->createService(BAT_SERVICE_UUID);
+  pCharacteristic_unknown->addDescriptor(new BLE2902());
   
-  pCharacteristic_bat = pBatService->createCharacteristic(
-                      BAT_CHAR_UUID,
-                      BLECharacteristic::PROPERTY_READ
-                    );
-  pCharacteristic_bat->setCallbacks(new batteryCallbacks());
-  pBatService->addCharacteristic(pCharacteristic_bat);  
-  uint8_t battery_level = 42;
-  pCharacteristic_bat->setValue(&battery_level, 1);
-  pCharacteristic_bat->addDescriptor(new BLE2902());
+  // BLEService *pBatService = pServer->createService(BAT_SERVICE_UUID);
+  
+  // pCharacteristic_bat = pBatService->createCharacteristic(
+  //                     BAT_CHAR_UUID,
+  //                     BLECharacteristic::PROPERTY_READ
+  //                   );
+  // pCharacteristic_bat->setCallbacks(new batteryCallbacks());
+  // uint8_t battery_level = 42;
+  // pCharacteristic_bat->setValue(&battery_level, 1);
+  // pCharacteristic_bat->addDescriptor(new BLE2902());
 
   // BLEService *pFWService = pServer->createService(FW_SERVICE_UUID);
   // pCharacteristic_fw = pCovService->createCharacteristic(
@@ -270,7 +284,7 @@ void setup() {
   pAdvertising->setAdvertisementData(AdvertisementData);
   
   BLEDevice::startAdvertising();
-
+  
   Serial.println("Device " NAME " ready.");
 }
 
@@ -287,5 +301,10 @@ void loop() {
   if (deviceConnected && !oldDeviceConnected) {
     // do stuff here on connecting
     oldDeviceConnected = deviceConnected;
-  }  
+  } 
+  if (deviceConnected && data_available) {
+    data_available = false;
+    decode();
+    delay(100);
+  }
 }
