@@ -3,7 +3,6 @@
 from typing import Any, Final
 
 from bleak.exc import BleakError
-
 from homeassistant.components.bluetooth.passive_update_coordinator import (
     PassiveBluetoothCoordinatorEntity,
 )
@@ -127,7 +126,10 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
                 self.async_write_ha_state()
             except BleakError as err:
                 LOGGER.error(
-                    f"Failed to move cover '{self.name}' to {target_position}%: {err}"
+                    "Failed to move cover '%s' to %f%%: %s",
+                    self.name,
+                    target_position,
+                    err,
                 )
 
     def _reset_target_position(self) -> None:
@@ -143,7 +145,7 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
             await self._coord.api.open()
             self.async_write_ha_state()
         except BleakError as err:
-            LOGGER.error(f"Failed to open cover '{self.name}': {err}")
+            LOGGER.error("Failed to open cover '%s': %s", self.name, err)
             self._reset_target_position()
 
     async def async_close_cover(self, **kwargs: Any) -> None:
@@ -156,7 +158,7 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
             await self._coord.api.close()
             self.async_write_ha_state()
         except BleakError as err:
-            LOGGER.error(f"Failed to close cover '{self.name}': {err}")
+            LOGGER.error("Failed to close cover '%s': %s", self.name, err)
             self._reset_target_position()
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
@@ -167,4 +169,4 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
             self._reset_target_position()
             self.async_write_ha_state()
         except BleakError as err:
-            LOGGER.error(f"Failed to stop cover '{self.name}': {err}")
+            LOGGER.error("Failed to stop cover '%s': %s", self.name, err)

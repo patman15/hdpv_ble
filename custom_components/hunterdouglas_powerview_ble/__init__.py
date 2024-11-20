@@ -5,7 +5,6 @@
 """
 
 from bleak.exc import BleakError
-
 from homeassistant.components.bluetooth import async_ble_device_from_address
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform

@@ -3,9 +3,8 @@
 from typing import Any
 
 from bleak.backends.device import BLEDevice
-
 from homeassistant.components import bluetooth
-from homeassistant.components.bluetooth import DOMAIN as BLUETOOTH_DOMAIN
+from homeassistant.components.bluetooth.const import DOMAIN as BLUETOOTH_DOMAIN
 from homeassistant.components.bluetooth.passive_update_coordinator import (
     PassiveBluetoothDataUpdateCoordinator,
 )
@@ -78,6 +77,12 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
     def device_present(self) -> bool:
         """Check if a device is present."""
         return bluetooth.async_address_present(self.hass, self._mac, connectable=True)
+
+    def _async_stop(self) -> None:
+        """Shutdown coordinator and any connection."""
+        LOGGER.debug("%s: shuting down BMS device", self.name)
+        self.hass.async_create_task(self.api.disconnect())
+        super()._async_stop()
 
     @callback
     def _async_handle_bluetooth_event(
