@@ -5,11 +5,11 @@
 
  A Home Assistant integration to support Hunter Douglas Powerview devices via Bluetooth
 
-## :warning: Limitations
-- This integration is under development!
-- Test coverage is low, malfunction might occur. 
-- Only devices that are **not** added to the app are controlable. It is possible to add them to the app if you just want to monitor the status (position, battery) in Home Assistant.
-- Currently only position change is supported (e.g., no tilt)
+> [!WARNING]
+> - This integration is under development!
+> - Test coverage is low, malfunction might occur. 
+> - Only devices that are **not** added to the app are controlable. It is possible to add them to the app if you just want to monitor the status (position, battery) in Home Assistant.
+> - Currently only position change is supported (e.g., no tilt)
 
 ## Features
 - Zero configuration
