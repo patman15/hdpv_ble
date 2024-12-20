@@ -1,13 +1,13 @@
-pip>=21.3.1
-homeassistant==2024.6.0
+-r requirements.txt
+
 wheel
 home-assistant-bluetooth
-habluetooth>=2.4.0
+habluetooth>=3.6.0
 bluetooth-adapters
-pytest>=8.0.2
-pytest-cov>=4.0.0
-pytest-socket>=0.5.0
-pytest-asyncio
+pytest>=8.3.3
+pytest-cov>=5.0.0
+pytest-socket>=0.7.0
+pytest-asyncio>=0.24.0
 sqlalchemy
 freezegun
 requests-mock
@@ -16,10 +16,10 @@ aiohttp
 aiohttp_cors
 aiohttp-fast-url-dispatcher
 aiohttp-zlib-ng
-bleak>=0.19.0
-bleak-retry-connector>=3.3.0
+bleak>=0.22.3
+bleak-retry-connector>=3.6.0
 bluetooth-data-tools
 pyserial-asyncio
 pyudev
-pytest-homeassistant-custom-component==0.13.132
+pytest-homeassistant-custom-component==0.13.181
 
