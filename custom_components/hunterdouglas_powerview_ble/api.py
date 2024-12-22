@@ -95,6 +95,7 @@ class PowerViewBLE:
         self._info: PVDeviceInfo = PVDeviceInfo()
         self._cmd_lock: Final = asyncio.Lock()
         self._cmd_next = None
+        self._is_encrypted: bool = False
         self._cipher: Final = (
             Cipher(algorithms.AES(home_key), modes.CTR(bytearray(16)))
             if len(home_key) == 16
@@ -104,6 +105,15 @@ class PowerViewBLE:
     async def _wait_event(self) -> None:
         await self._data_event.wait()
         self._data_event.clear()
+
+    @property
+    def encrypted(self) -> bool:
+        """Return whether communication with this shade is encrypted."""
+        return self._is_encrypted
+
+    @encrypted.setter
+    def encrypted(self, value:bool) -> None:
+        self._is_encrypted = value
 
     @property
     def info(self) -> PVDeviceInfo:
@@ -135,7 +145,7 @@ class PowerViewBLE:
                     )
                     + cmd_run[1]
                 )
-                if self._cipher is not None:
+                if self._cipher is not None and self._is_encrypted:
                     enc = self._cipher.encryptor()
                     tx_data = enc.update(tx_data) + enc.finalize()
                 self._data_event.clear()
@@ -224,7 +234,7 @@ class PowerViewBLE:
     def _verify_response(self, din: bytearray, seq_nr: int, cmd: ShadeCmd) -> bool:
         """Verify shade response data."""
         data: bytearray = din
-        if self._cipher is not None:
+        if self._cipher is not None and self._is_encrypted:
             dec = self._cipher.decryptor()
             data = bytearray(dec.update(din) + dec.finalize())
         if len(data) < 4:
