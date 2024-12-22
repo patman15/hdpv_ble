@@ -103,6 +103,7 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
                     bytearray(service_info.manufacturer_data.get(2073, b""))
                 )
             )
+            self.api.encrypted = bool(self.data.get("home_id"))
 
         LOGGER.debug("data sample %s", self.data)
         super()._async_handle_bluetooth_event(service_info, change)
