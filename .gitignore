@@ -152,3 +152,5 @@ cython_debug/
 #.idea/
 aes.py
 *.bak
+emu/PV_BLE_cover/PV_BLE_cover.ino
+img/

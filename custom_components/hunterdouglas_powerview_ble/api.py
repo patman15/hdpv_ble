@@ -16,7 +16,6 @@ from cryptography.hazmat.primitives.ciphers.base import (
     AEADDecryptionContext,
     AEADEncryptionContext,
 )
-
 from homeassistant.components.cover import ATTR_CURRENT_POSITION
 
 from .const import LOGGER, TIMEOUT
