@@ -39,6 +39,7 @@ The integration provides the following information about the battery
 Platform | Description | Unit | Details
 -- | -- | -- | --
 `binary_sensor` | battery charging indicator | `bool` | true if battery is charging
+`button` | identify shade | - | identify shade by LED and 3 beeps
 `cover` | view/control position | `%` | percentage cover is open (100% is open)
 `sensor` | SoC (state of charge) | `%` | range 100% (full), 50%, 20%, 0% (battery empty)
 
