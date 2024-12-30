@@ -14,7 +14,7 @@ from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
 from .const import DOMAIN, LOGGER
 from .coordinator import PVCoordinator
 
-PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.COVER, Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.COVER, Platform.SENSOR, Platform.BUTTON]
 
 type ConfigEntryType = ConfigEntry[PVCoordinator]
 
