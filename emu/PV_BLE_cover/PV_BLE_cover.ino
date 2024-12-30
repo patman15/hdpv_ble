@@ -179,7 +179,7 @@ void decode(BLECharacteristic *pChar) {
       break;
     case 0xF711:
       // identify
-      Serial.printf("identify: %i\n", data_dec[4]);
+      Serial.printf("identify: %i times\n", data_dec[4]);
       resp_size = set_response(&response, (const message *)data_dec);
       break;
     case 0xF7B8:
