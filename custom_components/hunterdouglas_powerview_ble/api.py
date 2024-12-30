@@ -145,11 +145,12 @@ class PowerViewBLE:
                     )
                     + cmd_run[1]
                 )
+                LOGGER.debug("sending cmd: %s", tx_data.hex(" "))
                 if self._cipher is not None and self._is_encrypted:
                     enc = self._cipher.encryptor()
                     tx_data = enc.update(tx_data) + enc.finalize()
+                    LOGGER.debug("  encrypted: %s", tx_data.hex(" "))
                 self._data_event.clear()
-                LOGGER.debug("sending cmd: %s", tx_data)
                 await self._client.write_gatt_char(UUID_TX, tx_data, False)
                 self._seqcnt += 1
                 LOGGER.debug("waiting for response")
@@ -179,7 +180,7 @@ class PowerViewBLE:
             ("position3", int(data[6])),
             ("tilt", int(data[7])),
             ("home_id", int.from_bytes(data[0:2], byteorder="little")),
-            ("type_id", int.from_bytes(data[2:3])),
+            ("type_id", int(data[2])),
             ("is_opening", bool(pos & 0x3 == 0x2)),
             ("is_closing", bool(pos & 0x3 == 0x1)),
             ("battery_charging", bool(pos & 0x3 == 0x3)),  # observed

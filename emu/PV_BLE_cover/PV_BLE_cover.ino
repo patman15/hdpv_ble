@@ -208,7 +208,7 @@ void decode(BLECharacteristic *pChar) {
     case 0xFB02:
       // set shade key
       Serial.print("set shade key: ");
-      print_hex(&data_raw[4], data_len - 4, "\\x");
+      print_hex(&data_raw[4], data_len - 4, "\\x", "");
       // set resonse before key, to acknowledge unencrypted
       resp_size = set_response(&response, (const message *)data_dec);
       if (msg.data_len == 16) {
