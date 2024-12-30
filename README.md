@@ -43,6 +43,8 @@ Platform | Description | Unit | Details
 `sensor` | SoC (state of charge) | `%` | range 100% (full), 50%, 20%, 0% (battery empty)
 
 ## Installation
+> [!IMPORTANT]
+> You need to set the encryption key manually in the [`const.py`](https://github.com/patman15/hdpv_ble/blob/main/custom_components/hunterdouglas_powerview_ble/const.py) file after **each** update!
 ### Automatic
 Installation can be done using [HACS](https://hacs.xyz/) by [adding a custom repository](https://hacs.xyz/docs/faq/custom_repositories/).
 
