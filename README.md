@@ -8,7 +8,6 @@
 > [!WARNING]
 > - This integration is under development!
 > - Test coverage is low, malfunction might occur. 
-> - Only devices that are **not** added to the app are controlable. It is possible to add them to the app if you just want to monitor the status (position, battery) in Home Assistant.
 > - Currently only position change is supported (e.g., no tilt)
 
 ## Features
@@ -18,7 +17,7 @@
 ### Supported Devices
 
 Type* | Description
--- | -- 
+-- | --
 1  | Designer Roller
 4  | Roman
 5  | Bottom Up
@@ -45,7 +44,8 @@ Platform | Description | Unit | Details
 
 ## Installation
 > [!IMPORTANT]
-> You need to set the encryption key manually in the [`const.py`](https://github.com/patman15/hdpv_ble/blob/main/custom_components/hunterdouglas_powerview_ble/const.py) file after **each** update!
+> In case you added your shades to the app or a gateway, you need to [set the encryption key](#set-the-encryption-key) manually in the [`const.py`](https://github.com/patman15/hdpv_ble/blob/main/custom_components/hunterdouglas_powerview_ble/const.py) file after **each** update!
+
 ### Automatic
 Installation can be done using [HACS](https://hacs.xyz/) by [adding a custom repository](https://hacs.xyz/docs/faq/custom_repositories/).
 
@@ -60,6 +60,17 @@ Installation can be done using [HACS](https://hacs.xyz/) by [adding a custom rep
 1. Restart Home Assistant
 1. In the HA UI go to "Configuration" -> "Integrations" click "+" and search for "Hunter Douglas PowerView (BLE)"
 
+## Set the Encryption Key
+Currently, there are three methods to optain the key:
+
+1. Via adopting a BLE shade: There is a [shade emulator](/emu/PV_BLE_cover) that works with Arduino IDE and an ESP32 device. Install and connect via serial port, then go to the PowerView app and add the shade `myPVcover` to your home. You will see a log message `set shade key: \xx\xx\xx\xx\xx\xx\xx\xx\xx\xx\xx\xx\xx\xx\xx\xx` . Copy this key.
+2. Extracting from gateway: This [PR](https://github.com/patman15/hdpv_ble/pull/2) proposes a script to extract the key from a working PowerView gateway.
+3. Grabing from the app: Checkout this [post in the Home Assistant community forum](https://community.home-assistant.io/t/hunter-douglas-powerview-gen-3-integration/424836/228).
+
+Finally, you need to manually copy the key to [`const.py`](https://github.com/patman15/hdpv_ble/blob/main/custom_components/hunterdouglas_powerview_ble/const.py).
+
+> [!IMPORTANT]
+> You need to update the file after **each** update!
 
 ## Outlook
 - Add support for encryption
