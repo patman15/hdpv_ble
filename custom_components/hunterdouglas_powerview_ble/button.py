@@ -1,8 +1,7 @@
 """Hunter Douglas Powerview cover."""
 
-from typing import Any, Final
+from typing import Final
 
-from bleak.exc import BleakError
 from homeassistant.components.bluetooth.passive_update_coordinator import (
     PassiveBluetoothCoordinatorEntity,
 )
@@ -17,8 +16,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo, format_mac
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .api import CLOSED_POSITION, OPEN_POSITION
-from .const import DOMAIN, HOME_KEY, LOGGER
+from .const import DOMAIN, LOGGER
 from .coordinator import PVCoordinator
 
 BUTTONS_SHADE: Final = [
@@ -69,4 +67,5 @@ class PowerViewButton(PassiveBluetoothCoordinatorEntity[PVCoordinator], ButtonEn
 
     async def async_press(self) -> None:
         """Handle the button press."""
+        LOGGER.debug("identify cover")
         await self._coord.api.identify()
