@@ -15,5 +15,5 @@ testpaths = [
 ]
 asyncio_mode = "auto"
 
-[tool.ruff.lint]
-ignore = ["T201"] # ignore for script
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["T201"]
