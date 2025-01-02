@@ -14,3 +14,6 @@ testpaths = [
     "tests",
 ]
 asyncio_mode = "auto"
+
+[tool.ruff.lint]
+ignore = ["T201"] # ignore for script

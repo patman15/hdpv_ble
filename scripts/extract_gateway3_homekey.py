@@ -1,4 +1,4 @@
-"""Extract PowerView homekey from a G3 PowerView Gateway"""
+"""Extract PowerView homekey from a G3 PowerView Gateway."""
 
 import base64
 import json
@@ -55,7 +55,7 @@ def get_shade_key(hub: str, ble_name) -> bytes:
 
     result: dict = json.loads(shades_exec_resp.content)
     if result.get("err") != 0 or len(result.get("responses", [])) != 1:
-        raise IOError("Error when attempting GetShadeKey")
+        raise OSError("Error when attempting GetShadeKey")
     response: Final[bytes] = bytes.fromhex(result["responses"][0]["hex"])
     dec_resp: Final[dict[str, Any]] = decode_response(response)
     if dec_resp["errorCode"] != 0:
