@@ -5,7 +5,6 @@
 """
 
 from bleak.exc import BleakError
-
 from homeassistant.components.bluetooth import async_ble_device_from_address
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -15,7 +14,7 @@ from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
 from .const import DOMAIN, LOGGER
 from .coordinator import PVCoordinator
 
-PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.COVER, Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.COVER, Platform.SENSOR, Platform.BUTTON]
 
 type ConfigEntryType = ConfigEntry[PVCoordinator]
 

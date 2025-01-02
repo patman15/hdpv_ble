@@ -1,0 +1,28 @@
+name: "Lint the code"
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron:  '0 5 * * 6'
+    
+jobs:
+  ruff:
+    name: "Ruff"
+    runs-on: "ubuntu-latest"
+    steps:
+        - name: "Checkout the repository"
+          uses: "actions/checkout@main"
+
+        - name: "Set up Python"
+          uses: actions/setup-python@main
+          with:
+            python-version: "3.12"
+            cache: "pip"
+
+        - name: "Install requirements"
+          run: python3 -m pip install -r requirements.txt
+
+        - name: "Run Ruff"
+          run: python3 -m ruff check .

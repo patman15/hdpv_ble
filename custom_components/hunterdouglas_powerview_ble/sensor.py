@@ -4,9 +4,11 @@ from homeassistant.components.bluetooth.passive_update_coordinator import (
     PassiveBluetoothCoordinatorEntity,
 )
 from homeassistant.components.sensor import (
-    SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
+)
+from homeassistant.components.sensor.const import (
+    SensorDeviceClass,
     SensorStateClass,
 )
 from homeassistant.const import (

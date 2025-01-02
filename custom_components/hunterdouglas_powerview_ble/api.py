@@ -1,28 +1,28 @@
 """Hunter Douglas PowerView BLE API."""
 
 import asyncio
+import time
 from dataclasses import dataclass
 from enum import Enum
-import time
 from typing import Final
 
 from bleak import BleakClient
 from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
 from bleak.uuids import normalize_uuid_str
-from bleak_retry_connector import close_stale_connections, establish_connection
+from bleak_retry_connector import establish_connection
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-
+from cryptography.hazmat.primitives.ciphers.base import CipherContext
 from homeassistant.components.cover import ATTR_CURRENT_POSITION
 
 from .const import LOGGER, TIMEOUT
 
-UUID_COV_SERVICE: Final = normalize_uuid_str("fdc1")
-UUID_TX: Final = "cafe1001-c0ff-ee01-8000-a110ca7ab1e0"
-UUID_DEV_SERVICE: Final = normalize_uuid_str("180a")
-UUID_BAT_SERVICE: Final = normalize_uuid_str("180f")
+UUID_COV_SERVICE: Final[str] = normalize_uuid_str("fdc1")
+UUID_TX: Final[str] = "cafe1001-c0ff-ee01-8000-a110ca7ab1e0"
+UUID_DEV_SERVICE: Final[str] = normalize_uuid_str("180a")
+UUID_BAT_SERVICE: Final[str] = normalize_uuid_str("180f")
 
-ATTR_ACTIVITY: Final = "activity"
+ATTR_ACTIVITY: Final[str] = "activity"
 
 
 SHADE_TYPE: Final[dict[int, str]] = {
@@ -59,6 +59,7 @@ class ShadeCmd(Enum):
     SET_POSITION = 0x01F7
     STOP = 0xB8F7
     ACTIVATE_SCENE = 0xBAF7
+    IDENTIFY = 0x11F7
 
 
 @dataclass
@@ -82,12 +83,21 @@ class PowerViewBLE:
         self._ble_device: Final[BLEDevice] = ble_device
         self.name: Final[str] = self._ble_device.name or "unknown"
         self._seqcnt: int = 1
-        self._client: BleakClient | None = None
+        self._client: BleakClient = BleakClient(
+            self._ble_device,
+            disconnected_callback=self._on_disconnect,
+            services=[
+                UUID_COV_SERVICE,
+                # self.UUID_DEV_SERVICE,
+                # self.UUID_BAT_SERVICE,
+            ],
+        )
         self._data_event = asyncio.Event()
         self._data: bytearray
         self._info: PVDeviceInfo = PVDeviceInfo()
         self._cmd_lock: Final = asyncio.Lock()
         self._cmd_next = None
+        self._is_encrypted: bool = False
         self._cipher: Final = (
             Cipher(algorithms.AES(home_key), modes.CTR(bytearray(16)))
             if len(home_key) == 16
@@ -99,6 +109,15 @@ class PowerViewBLE:
         self._data_event.clear()
 
     @property
+    def encrypted(self) -> bool:
+        """Return whether communication with this shade is encrypted."""
+        return self._is_encrypted
+
+    @encrypted.setter
+    def encrypted(self, value: bool) -> None:
+        self._is_encrypted = value
+
+    @property
     def info(self) -> PVDeviceInfo:
         """Return device information, e.g. SW version."""
         return self._info
@@ -106,7 +125,7 @@ class PowerViewBLE:
     @property
     def is_connected(self) -> bool:
         """Return whether remote device is connected."""
-        return self._client is not None and self._client.is_connected
+        return self._client.is_connected
 
     # general cmd: uint16_t cmd, uint8_t seqID, uint8_t data_len
     async def _cmd(
@@ -120,7 +139,6 @@ class PowerViewBLE:
         async with self._cmd_lock:
             try:
                 await self._connect()
-                assert self._client is not None, "missing BT client"
                 cmd_run = self._cmd_next
                 tx_data = (
                     bytearray(
@@ -129,11 +147,12 @@ class PowerViewBLE:
                     )
                     + cmd_run[1]
                 )
-                if self._cipher is not None:
+                LOGGER.debug("sending cmd: %s", tx_data.hex(" "))
+                if self._cipher is not None and self._is_encrypted:
                     enc = self._cipher.encryptor()
                     tx_data = enc.update(tx_data) + enc.finalize()
+                    LOGGER.debug("  encrypted: %s", tx_data.hex(" "))
                 self._data_event.clear()
-                LOGGER.debug("sending cmd: %s", tx_data)
                 await self._client.write_gatt_char(UUID_TX, tx_data, False)
                 self._seqcnt += 1
                 LOGGER.debug("waiting for response")
@@ -156,14 +175,14 @@ class PowerViewBLE:
             LOGGER.debug("not a V2 record!")
             return []
         pos = int.from_bytes(data[3:5], byteorder="little")
-        pos2 = ((int(data[5]) << 4) + (int(data[4]) >> 4))
+        pos2 = (int(data[5]) << 4) + (int(data[4]) >> 4)
         return [
             (ATTR_CURRENT_POSITION, ((pos >> 2) / 10)),
             ("position2", pos2 >> 2),
             ("position3", int(data[6])),
             ("tilt", int(data[7])),
             ("home_id", int.from_bytes(data[0:2], byteorder="little")),
-            ("type_id", int.from_bytes(data[2:3])),
+            ("type_id", int(data[2])),
             ("is_opening", bool(pos & 0x3 == 0x2)),
             ("is_closing", bool(pos & 0x3 == 0x1)),
             ("battery_charging", bool(pos & 0x3 == 0x3)),  # observed
@@ -195,7 +214,7 @@ class PowerViewBLE:
     async def stop(self) -> None:
         """Stop device movement."""
         LOGGER.debug("%s stop", self.name)
-        await self._cmd((ShadeCmd.STOP, bytearray(b"")))
+        await self._cmd((ShadeCmd.STOP, bytearray()))
 
     async def close(self) -> None:
         """Fully close cover."""
@@ -215,12 +234,13 @@ class PowerViewBLE:
             ),
         )
 
-    def _verify_response(self, input: bytearray, seq_nr: int, cmd: ShadeCmd) -> bool:
+    async def identify(self, beeps: int = 0x3) -> None:
+        """Identify device."""
+        LOGGER.debug("%s identify (%i)", self.name, beeps)
+        await self._cmd((ShadeCmd.IDENTIFY, bytearray([min(beeps, 0xFF)])))
+
+    def _verify_response(self, data: bytearray, seq_nr: int, cmd: ShadeCmd) -> bool:
         """Verify shade response data."""
-        data = input
-        if self._cipher is not None:
-            dec = self._cipher.decryptor()
-            data = dec.update(input) + dec.finalize()
         if len(data) < 4:
             LOGGER.error("Reponse message too short")
             return False
@@ -229,14 +249,14 @@ class PowerViewBLE:
             return False
         if int(data[2]) != seq_nr:
             LOGGER.warning(
-                f"Response sequence id {int(data[2])} wrong, expected {seq_nr}"
+                "Response sequence id %i wrong, expected %d", int(data[2]), seq_nr
             )
             return False
         if int(data[3]) != 1:
             LOGGER.error("Wrong response data length")
             return False
         if int(data[4] != 0):
-            LOGGER.error(f"Command {cmd.value} returned error #{int(data[4])}")
+            LOGGER.error("Command %X returned error #%d", cmd.value, int(data[4]))
             return False
         return True
 
@@ -255,7 +275,6 @@ class PowerViewBLE:
         async with self._cmd_lock:
             try:
                 await self._connect()
-                assert self._client is not None
 
                 for key, uuid in uuids.items():
                     LOGGER.debug("querying %s(%s)", key, uuid)
@@ -265,7 +284,7 @@ class PowerViewBLE:
                         .decode("UTF-8")
                     )
             finally:
-                await self._disconnect()
+                await self.disconnect()
         LOGGER.debug("%s device data: %s", self.name, data)
         return data.copy()
 
@@ -275,8 +294,13 @@ class PowerViewBLE:
         LOGGER.debug("Disconnected from %s", client.address)
 
     def _notification_handler(self, _sender, data: bytearray) -> None:
-        LOGGER.debug("%s received BLE data: %s", self.name, data)
+        LOGGER.debug("%s received BLE data: %s", self.name, data.hex(" "))
         self._data = data
+        if self._cipher is not None and self._is_encrypted:
+            dec: CipherContext = self._cipher.decryptor()
+            self._data = bytearray(dec.update(data) + dec.finalize())
+            LOGGER.debug("%s %s", "decoded data: ".rjust(19+len(self.name)), self._data.hex(" "))
+
         self._data_event.set()
 
     async def _connect(self) -> None:
@@ -288,9 +312,7 @@ class PowerViewBLE:
             LOGGER.debug("%s already connected", self.name)
             return
 
-        start = time.time()
-        await close_stale_connections(self._ble_device)
-
+        start: float = time.time()
         self._client = await establish_connection(
             BleakClient,
             self._ble_device,
@@ -308,10 +330,10 @@ class PowerViewBLE:
 
         # await self._query_dev_info()
 
-    async def _disconnect(self) -> None:
+    async def disconnect(self) -> None:
         """Disconnect the device and stop notifications."""
 
-        if self._client is not None and self.is_connected:
+        if self.is_connected:
             LOGGER.debug("Disconnecting device %s", self.name)
             try:
                 self._data_event.clear()
