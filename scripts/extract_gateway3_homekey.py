@@ -17,6 +17,7 @@ def create_request(sid: int, cid: int, sequence_id: int, data: bytes) -> bytes:
 
 
 def decode_response(packet: bytes) -> dict[str, Any]:
+    """Decode a response frame from the PowerView protocol."""
     if len(packet) < 4:
         raise ValueError("Packet size too small")
     sid, cid, sequence_id, length = struct.unpack("<BBBB", packet[0:4])
@@ -66,7 +67,7 @@ def get_shade_key(hub: str, ble_name) -> bytes:
 
 
 def main(hub: str) -> None:
-    """Main function, extract homekeys from all shades."""
+    """Extract the homekeys from all shades."""
     try:
         shades_resp: requests.Response = requests.get(
             hub + "/home/shades", timeout=TIMEOUT
