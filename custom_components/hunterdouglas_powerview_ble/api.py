@@ -182,8 +182,8 @@ class PowerViewBLE:
         if len(data) != 9:
             LOGGER.debug("not a V2 record!")
             return []
-        pos: int = int.from_bytes(data[3:5], byteorder="little")
-        pos2: int = (int(data[5]) << 4) + (int(data[4]) >> 4)
+        pos: Final[int] = int.from_bytes(data[3:5], byteorder="little")
+        pos2: Final[int] = (int(data[5]) << 4) + (int(data[4]) >> 4)
         return [
             (ATTR_CURRENT_POSITION, ((pos >> 2) / 10)),
             ("position2", pos2 >> 2),
