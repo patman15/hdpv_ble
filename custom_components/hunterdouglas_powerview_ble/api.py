@@ -16,7 +16,10 @@ from cryptography.hazmat.primitives.ciphers.base import (
     AEADDecryptionContext,
     AEADEncryptionContext,
 )
-from homeassistant.components.cover import ATTR_CURRENT_POSITION
+from homeassistant.components.cover import (
+    ATTR_CURRENT_POSITION,
+    ATTR_CURRENT_TILT_POSITION,
+)
 
 from .const import LOGGER, TIMEOUT
 
@@ -137,9 +140,7 @@ class PowerViewBLE:
         return self._client.is_connected
 
     # general cmd: uint16_t cmd, uint8_t seqID, uint8_t data_len
-    async def _cmd(
-        self, cmd: tuple[ShadeCmd, bytes], disconnect: bool = True
-    ) -> None:
+    async def _cmd(self, cmd: tuple[ShadeCmd, bytes], disconnect: bool = True) -> None:
         self._cmd_next = cmd
         if self._cmd_lock.locked():
             LOGGER.debug("%s: device busy, queuing %s command", self.name, cmd[0])
@@ -187,7 +188,7 @@ class PowerViewBLE:
             (ATTR_CURRENT_POSITION, ((pos >> 2) / 10)),
             ("position2", pos2 >> 2),
             ("position3", int(data[6])),
-            ("tilt", int(data[7])),
+            (ATTR_CURRENT_TILT_POSITION, int(data[7])),
             ("home_id", int.from_bytes(data[0:2], byteorder="little")),
             ("type_id", int(data[2])),
             ("is_opening", bool(pos & 0x3 == 0x2)),
@@ -199,16 +200,25 @@ class PowerViewBLE:
         ]
 
     # position cmd: uint16_t pos1, uint16_t pos2, uint16_t pos3, uint16_t tilt, uint8_t velocity
-    async def set_position(self, value: int, disconnect: bool = True) -> None:
+    async def set_position(
+        self,
+        pos1: int,
+        pos2: int = 0x8000,
+        pos3: int = 0x8000,
+        tilt: int = 0x8000,
+        velocity: int = 0x0,
+        disconnect: bool = True,
+    ) -> None:
         """Set position of device."""
-        LOGGER.debug("%s setting position to %i", self.name, value)
+        LOGGER.debug("%s setting position to %i", self.name, pos1)
         await self._cmd(
             (
                 ShadeCmd.SET_POSITION,
-                bytes(
-                    int.to_bytes(value * 100, 2, byteorder="little")
-                    + bytes([0x00, 0x80, 0x00, 0x80, 0x00, 0x80, 0x0])
-                ),
+                int.to_bytes(pos1 * 100, 2, byteorder="little")
+                + int.to_bytes(pos2 * 100, 2, byteorder="little")
+                + int.to_bytes(pos3 * 100, 2, byteorder="little")
+                + int.to_bytes(tilt * 100, 2, byteorder="little")
+                + int.to_bytes(velocity, 1),
             ),
             disconnect,
         )
