@@ -8,7 +8,9 @@ from homeassistant.components.bluetooth.passive_update_coordinator import (
 )
 from homeassistant.components.cover import (
     ATTR_CURRENT_POSITION,
+    ATTR_CURRENT_TILT_POSITION,
     ATTR_POSITION,
+    ATTR_TILT_POSITION,
     CoverDeviceClass,
     CoverEntity,
     CoverEntityFeature,
@@ -35,7 +37,7 @@ async def async_setup_entry(
 
 
 class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEntity):  # type: ignore[reportIncompatibleVariableOverride]
-    """Representation of a powerview shade."""
+    """Representation of a PowerView shade with Up/Down functionality only."""
 
     _attr_has_entity_name = True
     _attr_device_class = CoverDeviceClass.SHADE
@@ -170,3 +172,50 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
             self.async_write_ha_state()
         except BleakError as err:
             LOGGER.error("Failed to stop cover '%s': %s", self.name, err)
+
+
+class PowerViewCoverTilt(PowerViewCover):
+    """Representation of a PowerView shade with additional tilt functionality."""
+
+    _attr_supported_features = (
+        CoverEntityFeature.OPEN
+        | CoverEntityFeature.CLOSE
+        | CoverEntityFeature.SET_POSITION
+        | CoverEntityFeature.STOP
+        #        | CoverEntityFeature.CLOSE_TILT
+        | CoverEntityFeature.SET_TILT_POSITION
+        #        | CoverEntityFeature.OPEN_TILT
+    )
+
+    @property
+    def current_cover_tilt_position(self) -> int | None:  # type: ignore[reportIncompatibleVariableOverride]
+        """Return current tilt of cover.
+
+        None is unknown
+        """
+        pos: Final = self._coord.data.get(ATTR_CURRENT_TILT_POSITION)
+        return round(pos) if pos is not None else None
+
+    async def async_set_cover_tilt_position(self, **kwargs: Any) -> None:
+        """Move the tilt to a specific position."""
+
+        if isinstance(target_position := kwargs.get(ATTR_TILT_POSITION), int):
+            LOGGER.debug("set cover tilt to position %i", target_position)
+            if (
+                self.current_cover_tilt_position == round(target_position)
+                or self.current_cover_position is None
+            ):
+                return
+
+            try:
+                await self._coord.api.set_position(
+                    self.current_cover_position, tilt=target_position
+                )
+                self.async_write_ha_state()
+            except BleakError as err:
+                LOGGER.error(
+                    "Failed to tilt cover '%s' to %f%%: %s",
+                    self.name,
+                    target_position,
+                    err,
+                )

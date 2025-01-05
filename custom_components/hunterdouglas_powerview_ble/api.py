@@ -71,6 +71,7 @@ class ShadeCmd(Enum):
     SET_POSITION = 0x01F7
     STOP = 0xB8F7
     ACTIVATE_SCENE = 0xBAF7
+    IDENTIFY = 0x11F7
 
 
 @dataclass
@@ -154,11 +155,12 @@ class PowerViewBLE:
                     + bytes([self._seqcnt, len(cmd_run[1])])
                     + cmd_run[1]
                 )
+                LOGGER.debug("sending cmd: %s", tx_data.hex(" "))
                 if self._cipher is not None and self._is_encrypted:
                     enc: AEADEncryptionContext = self._cipher.encryptor()
                     tx_data = enc.update(tx_data) + enc.finalize()
+                    LOGGER.debug("  encrypted: %s", tx_data.hex(" "))
                 self._data_event.clear()
-                LOGGER.debug("sending cmd: %s", tx_data)
                 await self._client.write_gatt_char(UUID_TX, tx_data, False)
                 self._seqcnt += 1
                 LOGGER.debug("waiting for response")
@@ -180,8 +182,8 @@ class PowerViewBLE:
         if len(data) != 9:
             LOGGER.debug("not a V2 record!")
             return []
-        pos: int = int.from_bytes(data[3:5], byteorder="little")
-        pos2: int = (int(data[5]) << 4) + (int(data[4]) >> 4)
+        pos: Final[int] = int.from_bytes(data[3:5], byteorder="little")
+        pos2: Final[int] = (int(data[5]) << 4) + (int(data[4]) >> 4)
         return [
             (ATTR_CURRENT_POSITION, ((pos >> 2) / 10)),
             ("position2", pos2 >> 2),
@@ -270,7 +272,7 @@ class PowerViewBLE:
             LOGGER.error("Wrong response data length")
             return False
         if int(data[4] != 0):
-            LOGGER.error("Command %d returned error #%d", cmd.value, int(data[4]))
+            LOGGER.error("Command %X returned error #%d", cmd.value, int(data[4]))
             return False
         return True
 
@@ -308,8 +310,13 @@ class PowerViewBLE:
         LOGGER.debug("Disconnected from %s", client.address)
 
     def _notification_handler(self, _sender, data: bytearray) -> None:
-        LOGGER.debug("%s received BLE data: %s", self.name, data)
+        LOGGER.debug("%s received BLE data: %s", self.name, data.hex(" "))
         self._data = data
+        if self._cipher is not None and self._is_encrypted:
+            dec: AEADDecryptionContext = self._cipher.decryptor()
+            self._data = bytearray(dec.update(data) + dec.finalize())
+            LOGGER.debug("%s %s", "decoded data: ".rjust(19+len(self.name)), self._data.hex(" "))
+
         self._data_event.set()
 
     async def _connect(self) -> None:
@@ -321,7 +328,7 @@ class PowerViewBLE:
             LOGGER.debug("%s already connected", self.name)
             return
 
-        start = time.time()
+        start: float = time.time()
         self._client = await establish_connection(
             BleakClient,
             self._ble_device,
