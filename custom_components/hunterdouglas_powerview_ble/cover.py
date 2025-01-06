@@ -34,7 +34,11 @@ async def async_setup_entry(
     """Set up the demo cover platform."""
 
     coordinator: PVCoordinator = config_entry.runtime_data
-    async_add_entities([PowerViewCover(coordinator)])
+    async_add_entities(
+        [PowerViewCoverTilt(coordinator)]
+        if coordinator.dev_details.get("model") in ["51", "62"]
+        else [PowerViewCover(coordinator)]
+    )
 
 
 class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEntity):  # type: ignore[reportIncompatibleVariableOverride]
@@ -54,8 +58,9 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
         coordinator: PVCoordinator,
     ) -> None:
         """Initialize the shade."""
+        LOGGER.debug("%s: init() PowerViewCover", coordinator.name)
         self._attr_name = CoverDeviceClass.SHADE
-        self._coord = coordinator
+        self._coord: PVCoordinator = coordinator
         self._attr_device_info = self._coord.device_info
         self._target_position: int | None = round(
             self._coord.data.get(ATTR_CURRENT_POSITION, OPEN_POSITION)
@@ -187,6 +192,13 @@ class PowerViewCoverTilt(PowerViewCover):
         | CoverEntityFeature.SET_TILT_POSITION
         #        | CoverEntityFeature.OPEN_TILT
     )
+
+    def __init__(
+        self,
+        coordinator: PVCoordinator,
+    ) -> None:
+        LOGGER.debug("%s: init() PowerViewCoverTilt", coordinator.name)
+        super().__init__(coordinator)
 
     @property
     def current_cover_tilt_position(self) -> int | None:  # type: ignore[reportIncompatibleVariableOverride]

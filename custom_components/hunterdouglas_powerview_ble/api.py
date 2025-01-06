@@ -51,6 +51,9 @@ SHADE_TYPE: Final[dict[int, str]] = {
     9: "Duette DuoLite, Top Down Bottom Up",
     33: "Duette Architella, Top Down Bottom Up",
     47: "Pleated, Top Down Bottom Up",
+    # top down, tilt anywhere
+    51: "Venetian, Tilt Anywhere",
+    62: "Venetian, Tilt Anywhere",
 }
 
 OPEN_POSITION: Final[int] = 100
@@ -203,21 +206,21 @@ class PowerViewBLE:
     async def set_position(
         self,
         pos1: int,
-        pos2: int = 0x8000,
-        pos3: int = 0x8000,
-        tilt: int = 0x8000,
+        pos2: int | None = None,
+        pos3: int | None = None,
+        tilt: int | None = None,
         velocity: int = 0x0,
         disconnect: bool = True,
     ) -> None:
         """Set position of device."""
-        LOGGER.debug("%s setting position to %i", self.name, pos1)
+        LOGGER.debug("%s setting position to %i, tilt %i", self.name, pos1, tilt)
         await self._cmd(
             (
                 ShadeCmd.SET_POSITION,
-                int.to_bytes(pos1 * 100, 2, byteorder="little")
-                + int.to_bytes(pos2 * 100, 2, byteorder="little")
-                + int.to_bytes(pos3 * 100, 2, byteorder="little")
-                + int.to_bytes(tilt * 100, 2, byteorder="little")
+                int.to_bytes(pos1, 2, byteorder="little")
+                + int.to_bytes(pos2 if pos2 is not None else 0x8000, 2, byteorder="little")
+                + int.to_bytes(pos3 if pos3 is not None else 0x8000, 2, byteorder="little")
+                + int.to_bytes(tilt if tilt is not None else 0x8000, 2, byteorder="little")
                 + int.to_bytes(velocity, 1),
             ),
             disconnect,
