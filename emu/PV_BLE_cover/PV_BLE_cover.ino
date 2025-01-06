@@ -11,9 +11,13 @@
  */
 
 #define NAME "myPVcover"
-#define FW_VERSION "391"
-#define SERIAL_NR "01234567890ABCDEF"
-
+const uint16_t SW_VERSION = 391;
+const char *SERIAL_NR = "01234567890ABCDEF";
+const uint16_t TYP_ID = 62;
+const uint16_t MODEL_ID = 224;
+const uint16_t FW_REVISION = 27;
+const uint32_t HW_REVISION = 171103;
+const uint8_t BATTERY_LEVEL = 42;
 
 #include <BLEDevice.h>
 #include <BLEServer.h>
@@ -40,7 +44,11 @@ int devId = INVALID_DEVID;  //if not using async INVALID_DEVID is default
 
 #define DEV_SERVICE_UUID BLEUUID("180A")
 #define SER_CHAR_UUID BLEUUID("2A25")
-#define SWC_CHAR_UUID BLEUUID("2A28")
+#define MAN_CHAR_UUID BLEUUID("2A29")
+#define MOD_CHAR_UUID BLEUUID("2A24")
+#define FWR_CHAR_UUID BLEUUID("2A26")
+#define HWR_CHAR_UUID BLEUUID("2A27")
+#define SWR_CHAR_UUID BLEUUID("2A28")
 
 #define BAT_SERVICE_UUID BLEUUID("180F")
 #define BAT_CHAR_UUID BLEUUID("2A19")
@@ -69,7 +77,7 @@ struct notification {
 };
 
 BLECharacteristic *pCharacteristic_cover, *pCharacteristic_fw, *pCharacteristic_unknown, *pCharacteristic_bat;
-BLECharacteristic *pCharacteristic_dev, *pCharacteristic_ser;
+BLECharacteristic *pCharacteristic_dev, *pCharacteristic_ser, *pCharacteristic_man, *pCharacteristic_mod, *pCharacteristic_fwr, *pCharacteristic_hwr;
 BLEServer *pServer = NULL;
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
@@ -159,11 +167,11 @@ void decode(BLECharacteristic *pChar) {
   Serial.printf("\t  message: SRV: %02x, CMD %02x, SEQ %i, LEN %i\n", msg.serviceID, msg.cmdID, msg.sequence, msg.data_len);
 
   // sepecial responses (static data!)
-  const byte ret_valF1DD[] = { 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x87, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };                                                                                            // product info
-  const byte ret_valFFDD[] = { 0x00, 0x05, 0xd1, 0xa2, 0x9a, 0x42, 0x59, 0x5d, 0x5c, 0x52, 0x1b, 0x00, 0x00, 0x00, 0x87, 0x01, 0x00, 0x00, 0x5f, 0x9c, 0x02, 0x00, 0x5f, 0x9c, 0x02, 0x00, 0x2a, 0xe0, 0x08 };  // HW diagnostics
-  const byte ret_valFFDE[] = { 0x08, 0x00, 0x02, 0x26, 0x72, 0x01, 0x59, 0x01, 0x00 };                                                                                                                          // power status
-  const byte ret_valFA5B[] = { 0x00, 0x0a, 0xa2, 0x88, 0x13, 0x00, 0x80, 0x00, 0x80, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };                                                                    // get scene
-  const byte ret_valFA5A[] = { 0x00, 0x02, 0xb0 };                                                                                                                                                              // set scene
+  const byte ret_valF1DD[] = { 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x87, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };                                                                                                                                                // product info
+  const byte ret_valFFDD[] = { 0x00, 0x05, 0xd1, 0xa2, 0x9a, 0x42, 0x59, 0x5d, 0x5c, 0x52, 0x1b, 0x00, 0x00, 0x00, (uint8_t)(SW_VERSION & 0xFF), (uint8_t)(SW_VERSION >> 8), 0x00, 0x00, 0x5f, 0x9c, 0x02, 0x00, 0x5f, 0x9c, 0x02, 0x00, TYP_ID, MODEL_ID, 0x08 };  // HW diagnostics
+  const byte ret_valFFDE[] = { 0x08, 0x00, 0x02, 0x26, 0x72, 0x01, 0x59, 0x01, 0x00 };                                                                                                                                                                              // power status
+  const byte ret_valFA5B[] = { 0x00, 0x0a, 0xa2, 0x88, 0x13, 0x00, 0x80, 0x00, 0x80, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };                                                                                                                        // get scene
+  const byte ret_valFA5A[] = { 0x00, 0x02, 0xb0 };                                                                                                                                                                                                                  // set scene
 
   Serial.print("\t\t");
   switch ((msg.serviceID << 8) | msg.cmdID) {
@@ -291,7 +299,7 @@ class coverCallbacks : public BLECharacteristicCallbacks {
   void onNotify(BLECharacteristic *pCharacteristic) {
     Serial.printf("Cover onNotify() %s\n", pCharacteristic->toString().c_str());
   }
-  
+
   void onStatus(BLECharacteristic *pCharacteristic, Status s, uint32_t code) {
     Serial.printf("Cover onStatus() %s: %s\n", BLEstate[s], pCharacteristic->toString().c_str());
   }
@@ -373,8 +381,7 @@ pDesc1->setValue("cover");*/
     BAT_CHAR_UUID,
     BLECharacteristic::PROPERTY_READ);
   pCharacteristic_bat->setCallbacks(new batteryCallbacks());
-  uint8_t battery_level = 42;
-  pCharacteristic_bat->setValue(&battery_level, 1);
+  pCharacteristic_bat->setValue((uint8_t *)&BATTERY_LEVEL, 1);
   pCharacteristic_bat->addDescriptor(new BLE2902());
 
   BLEService *pFWService = pServer->createService(FW_SERVICE_UUID);
@@ -390,15 +397,37 @@ pDesc1->setValue("cover");*/
 
   BLEService *pDEVService = pServer->createService(DEV_SERVICE_UUID);
   pCharacteristic_dev = pDEVService->createCharacteristic(
-    SWC_CHAR_UUID,
+    SWR_CHAR_UUID,
     BLECharacteristic::PROPERTY_READ);
-  pCharacteristic_dev->setValue(FW_VERSION);
+  pCharacteristic_dev->setValue(String(SW_VERSION));
   pCharacteristic_dev->setCallbacks(new genericCallbacks());
   pCharacteristic_ser = pDEVService->createCharacteristic(
     SER_CHAR_UUID,
     BLECharacteristic::PROPERTY_READ);
   pCharacteristic_ser->setValue(SERIAL_NR);
   pCharacteristic_ser->setCallbacks(new genericCallbacks());
+
+  pCharacteristic_man = pDEVService->createCharacteristic(
+    MAN_CHAR_UUID,
+    BLECharacteristic::PROPERTY_READ);
+  pCharacteristic_man->setValue("Hunter Douglas");
+  pCharacteristic_man->setCallbacks(new genericCallbacks());
+  pCharacteristic_mod = pDEVService->createCharacteristic(
+    MOD_CHAR_UUID,
+    BLECharacteristic::PROPERTY_READ);
+  pCharacteristic_mod->setValue(String(TYP_ID));
+  pCharacteristic_mod->setCallbacks(new genericCallbacks());  
+    pCharacteristic_fwr = pDEVService->createCharacteristic(
+    FWR_CHAR_UUID,
+    BLECharacteristic::PROPERTY_READ);
+  pCharacteristic_fwr->setValue(String(FW_REVISION));
+  pCharacteristic_fwr->setCallbacks(new genericCallbacks());  
+  pCharacteristic_hwr = pDEVService->createCharacteristic(
+    HWR_CHAR_UUID,
+    BLECharacteristic::PROPERTY_READ);
+  pCharacteristic_hwr->setValue(String(HW_REVISION));
+  pCharacteristic_hwr->setCallbacks(new genericCallbacks());  
+ 
 
   // Start the services
   pCovService->start();
@@ -408,9 +437,10 @@ pDesc1->setValue("cover");*/
 
   // Start advertising
   BLEAdvertisementData AdvertisementData;
-  const String manufacturerData = String("\x19\x08\x00\x00\x2A\x00\x00\x00\x00\x00\xA2", 11);
-  //                         Hunter Douglas ^^--^^ ^^key^^  ^^ ID-Type
-  AdvertisementData.setManufacturerData(manufacturerData);
+  const char adv[] = {0x19, 0x08, 0x00, 0x00, TYP_ID, 0x00, 0x00, 0x00, 0x00, 0x00, 0xA2};
+  //     Hunter Douglas ^^ -- ^^    ^^key ^^          ^--pos1--^
+ 
+  AdvertisementData.setManufacturerData(String(adv, 11));
   AdvertisementData.setPartialServices(BLEUUID(COVER_SERVICE_UUID));
   AdvertisementData.setFlags((1 << 2) | (1 << 1));  // [BR/EDR Not Supported] | [LE General Discoverable Mode]
 
