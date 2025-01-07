@@ -218,9 +218,15 @@ class PowerViewBLE:
             (
                 ShadeCmd.SET_POSITION,
                 int.to_bytes(pos1, 2, byteorder="little")
-                + int.to_bytes(pos2 if pos2 is not None else 0x8000, 2, byteorder="little")
-                + int.to_bytes(pos3 if pos3 is not None else 0x8000, 2, byteorder="little")
-                + int.to_bytes(tilt if tilt is not None else 0x8000, 2, byteorder="little")
+                + int.to_bytes(
+                    pos2 if pos2 is not None else 0x8000, 2, byteorder="little"
+                )
+                + int.to_bytes(
+                    pos3 if pos3 is not None else 0x8000, 2, byteorder="little"
+                )
+                + int.to_bytes(
+                    tilt if tilt is not None else 0x8000, 2, byteorder="little"
+                )
                 + int.to_bytes(velocity, 1),
             ),
             disconnect,
@@ -303,8 +309,8 @@ class PowerViewBLE:
                         .copy()
                         .decode("UTF-8")
                     )
-            except Exception as ex:
-                LOGGER.error("Error: %s - %s", type(ex).__name__, ex)
+            except BleakError as ex:
+                LOGGER.debug("%s: querying failed: %s", self.name, ex)
                 raise
             finally:
                 await self.disconnect()
