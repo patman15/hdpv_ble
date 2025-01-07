@@ -185,11 +185,12 @@ class PowerViewCoverTilt(PowerViewCover):
     _attr_supported_features = (
         CoverEntityFeature.OPEN
         | CoverEntityFeature.CLOSE
-        | CoverEntityFeature.SET_POSITION
         | CoverEntityFeature.STOP
-        #        | CoverEntityFeature.CLOSE_TILT
+        | CoverEntityFeature.SET_POSITION
+        | CoverEntityFeature.OPEN_TILT
+        | CoverEntityFeature.CLOSE_TILT
+        | CoverEntityFeature.STOP_TILT
         | CoverEntityFeature.SET_TILT_POSITION
-        #        | CoverEntityFeature.OPEN_TILT
     )
 
     def __init__(
@@ -231,3 +232,19 @@ class PowerViewCoverTilt(PowerViewCover):
                     target_position,
                     err,
                 )
+
+    async def async_stop_cover_tilt(self, **kwargs: Any) -> None:
+        """Stop the cover."""
+        await self.async_stop_cover(kwargs=kwargs)
+
+    async def async_open_cover_tilt(self, **kwargs: Any) -> None:
+        """Open the cover tilt."""
+        LOGGER.debug("open cover tilt")
+        _kwargs = {**kwargs, ATTR_TILT_POSITION: OPEN_POSITION}
+        await self.async_set_cover_tilt_position(**_kwargs)
+
+    async def async_close_cover_tilt(self, **kwargs: Any) -> None:
+        """Close the cover tilt."""
+        LOGGER.debug("close cover tilt")
+        _kwargs = {**kwargs, ATTR_TILT_POSITION: CLOSED_POSITION}
+        await self.async_set_cover_tilt_position(**_kwargs)
