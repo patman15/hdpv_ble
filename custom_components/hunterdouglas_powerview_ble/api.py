@@ -50,6 +50,7 @@ SHADE_TYPE: Final[dict[int, str]] = {
     8: "Duette, Top Down Bottom Up",
     9: "Duette DuoLite, Top Down Bottom Up",
     33: "Duette Architella, Top Down Bottom Up",
+    39: "Parkland",
     47: "Pleated, Top Down Bottom Up",
     # top down, tilt anywhere
     51: "Venetian, Tilt Anywhere",

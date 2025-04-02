@@ -25,6 +25,7 @@ from .api import CLOSED_POSITION, OPEN_POSITION
 from .const import DOMAIN, HOME_KEY, LOGGER
 from .coordinator import PVCoordinator
 
+TILT_ONLY_OPENCLOSED_THRESHOLD = 5
 
 async def async_setup_entry(
     _hass: HomeAssistant,
@@ -34,11 +35,16 @@ async def async_setup_entry(
     """Set up the demo cover platform."""
 
     coordinator: PVCoordinator = config_entry.runtime_data
-    async_add_entities(
-        [PowerViewCoverTilt(coordinator)]
-        if coordinator.dev_details.get("model") in ["51", "62"]
-        else [PowerViewCover(coordinator)]
-    )
+    model: str = coordinator.dev_details.get("model")
+    entites: list[PowerViewCover] = []
+    if model in ["39"]:
+        entites.append(PowerViewCoverTiltOnly(coordinator))
+    elif model in ["51", "62"]:
+        entites.append(PowerViewCoverTilt(coordinator))
+    else:
+        entites.append(PowerViewCover(coordinator))
+
+    async_add_entities(entites)
 
 
 class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEntity):  # type: ignore[reportIncompatibleVariableOverride]
@@ -249,3 +255,41 @@ class PowerViewCoverTilt(PowerViewCover):
         LOGGER.debug("close cover tilt")
         _kwargs = {**kwargs, ATTR_TILT_POSITION: CLOSED_POSITION}
         await self.async_set_cover_tilt_position(**_kwargs)
+
+class PowerViewCoverTiltOnly(PowerViewCoverTilt):
+    """Representation of a PowerView shade with additional tilt functionality."""
+
+    _attr_device_class = CoverDeviceClass.BLIND
+    _attr_supported_features = (
+        CoverEntityFeature.OPEN_TILT
+        | CoverEntityFeature.CLOSE_TILT
+        | CoverEntityFeature.STOP_TILT
+        | CoverEntityFeature.SET_TILT_POSITION
+    )
+
+    def __init__(
+        self,
+        coordinator: PVCoordinator,
+    ) -> None:
+        LOGGER.debug("%s: init() PowerViewCoverTiltOnly", coordinator.name)
+        super().__init__(coordinator)
+
+    @property
+    def is_opening(self) -> bool | None:  # type: ignore[reportIncompatibleVariableOverride]
+        """Return if the cover is opening or not."""
+        return False
+
+    @property
+    def is_closing(self) -> bool | None:  # type: ignore[reportIncompatibleVariableOverride]
+        """Return if the cover is closing or not."""
+        return False
+
+    @property
+    def is_closed(self) -> bool:  # type: ignore[reportIncompatibleVariableOverride]
+        """Return if the cover is closed."""
+        return (
+            isinstance(self.current_cover_tilt_position, int)
+            and (self.current_cover_tilt_position >= OPEN_POSITION-TILT_ONLY_OPENCLOSED_THRESHOLD
+                or self.current_cover_tilt_position <= CLOSED_POSITION+TILT_ONLY_OPENCLOSED_THRESHOLD
+            )
+        )
