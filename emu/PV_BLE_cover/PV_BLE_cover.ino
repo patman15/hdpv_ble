@@ -2,6 +2,12 @@
  * Emulate a Hunter Douglas PowerView cover device using ESP32
  * used e.g. to gain the home_key from an existing installation via BLE
  * 
+ * REQUIRES:
+ * - ESP32 Board Definitions 3.0.x (tested on 3.0.7)
+ * - WolfSSL 5.7.x (tested on 5.7.6)
+ * - Phone Region: Potentially an alternative region depending on the app response
+ *  - e.g. To add Parkland shades in the US, phone region set to the UK temporarily
+ * 
  * TODO:
  * - cleanup code
  * - think about emulating a remote
