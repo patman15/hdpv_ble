@@ -25,7 +25,6 @@ from .api import CLOSED_POSITION, OPEN_POSITION
 from .const import DOMAIN, HOME_KEY, LOGGER
 from .coordinator import PVCoordinator
 
-TILT_ONLY_OPENCLOSED_THRESHOLD = 5
 
 async def async_setup_entry(
     _hass: HomeAssistant,
@@ -35,7 +34,7 @@ async def async_setup_entry(
     """Set up the demo cover platform."""
 
     coordinator: PVCoordinator = config_entry.runtime_data
-    model: str = coordinator.dev_details.get("model")
+    model: Final[str|None] = coordinator.dev_details.get("model")
     entites: list[PowerViewCover] = []
     if model in ["39"]:
         entites.append(PowerViewCoverTiltOnly(coordinator))
@@ -256,8 +255,11 @@ class PowerViewCoverTilt(PowerViewCover):
         _kwargs = {**kwargs, ATTR_TILT_POSITION: CLOSED_POSITION}
         await self.async_set_cover_tilt_position(**_kwargs)
 
+
 class PowerViewCoverTiltOnly(PowerViewCoverTilt):
     """Representation of a PowerView shade with additional tilt functionality."""
+
+    OPENCLOSED_THRESHOLD = 5
 
     _attr_device_class = CoverDeviceClass.BLIND
     _attr_supported_features = (
@@ -287,9 +289,9 @@ class PowerViewCoverTiltOnly(PowerViewCoverTilt):
     @property
     def is_closed(self) -> bool:  # type: ignore[reportIncompatibleVariableOverride]
         """Return if the cover is closed."""
-        return (
-            isinstance(self.current_cover_tilt_position, int)
-            and (self.current_cover_tilt_position >= OPEN_POSITION-TILT_ONLY_OPENCLOSED_THRESHOLD
-                or self.current_cover_tilt_position <= CLOSED_POSITION+TILT_ONLY_OPENCLOSED_THRESHOLD
-            )
+        return isinstance(self.current_cover_tilt_position, int) and (
+            self.current_cover_tilt_position
+            >= OPEN_POSITION - PowerViewCoverTiltOnly.OPENCLOSED_THRESHOLD
+            or self.current_cover_tilt_position
+            <= CLOSED_POSITION + PowerViewCoverTiltOnly.OPENCLOSED_THRESHOLD
         )
