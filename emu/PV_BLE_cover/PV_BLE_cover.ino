@@ -13,7 +13,7 @@
 #define NAME "myPVcover"
 const uint16_t SW_VERSION = 391;
 const char *SERIAL_NR = "01234567890ABCDEF";
-const uint16_t TYP_ID = 62;
+const uint16_t TYP_ID = 42; // 62
 const uint16_t MODEL_ID = 224;
 const uint16_t FW_REVISION = 27;
 const uint32_t HW_REVISION = 171103;
@@ -259,7 +259,9 @@ void decode(BLECharacteristic *pChar) {
       resp_size = set_response(&response, (const message *)data_dec);
       break;
     default:
-      Serial.println(F("*********************************** unknown message"));
+      Serial.println(F("*********************************** unknown message (try ACK)"));
+      resp_size = set_response(&response, (const message *)data_dec);
+      break;      
   }
   if (resp_size) {
     pChar->setValue((uint8_t *)&response, resp_size);
@@ -349,6 +351,7 @@ class genericCallbacks : public BLECharacteristicCallbacks {
 
 void setup() {
   Serial.begin(115200);
+  delay(1000);  // wait for terminal to be ready
   Serial.println(NAME " initializing ...");
 
   BLEDevice::init(NAME);
@@ -416,18 +419,18 @@ pDesc1->setValue("cover");*/
     MOD_CHAR_UUID,
     BLECharacteristic::PROPERTY_READ);
   pCharacteristic_mod->setValue(String(TYP_ID));
-  pCharacteristic_mod->setCallbacks(new genericCallbacks());  
-    pCharacteristic_fwr = pDEVService->createCharacteristic(
+  pCharacteristic_mod->setCallbacks(new genericCallbacks());
+  pCharacteristic_fwr = pDEVService->createCharacteristic(
     FWR_CHAR_UUID,
     BLECharacteristic::PROPERTY_READ);
   pCharacteristic_fwr->setValue(String(FW_REVISION));
-  pCharacteristic_fwr->setCallbacks(new genericCallbacks());  
+  pCharacteristic_fwr->setCallbacks(new genericCallbacks());
   pCharacteristic_hwr = pDEVService->createCharacteristic(
     HWR_CHAR_UUID,
     BLECharacteristic::PROPERTY_READ);
   pCharacteristic_hwr->setValue(String(HW_REVISION));
-  pCharacteristic_hwr->setCallbacks(new genericCallbacks());  
- 
+  pCharacteristic_hwr->setCallbacks(new genericCallbacks());
+
 
   // Start the services
   pCovService->start();
@@ -437,9 +440,9 @@ pDesc1->setValue("cover");*/
 
   // Start advertising
   BLEAdvertisementData AdvertisementData;
-  const char adv[] = {0x19, 0x08, 0x00, 0x00, TYP_ID, 0x00, 0x00, 0x00, 0x00, 0x00, 0xA2};
+  const char adv[] = { 0x19, 0x08, 0x00, 0x00, TYP_ID, 0x00, 0x00, 0x00, 0x00, 0x00, 0xA2 };
   //     Hunter Douglas ^^ -- ^^    ^^key ^^          ^--pos1--^
- 
+
   AdvertisementData.setManufacturerData(String(adv, 11));
   AdvertisementData.setPartialServices(BLEUUID(COVER_SERVICE_UUID));
   AdvertisementData.setFlags((1 << 2) | (1 << 1));  // [BR/EDR Not Supported] | [LE General Discoverable Mode]
