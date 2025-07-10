@@ -230,7 +230,7 @@ class PowerViewCoverTilt(PowerViewCover):
 
             try:
                 await self._coord.api.set_position(
-                    self.current_cover_position, tilt=target_position
+                    self.current_cover_position, pos2=target_position
                 )
                 self.async_write_ha_state()
             except BleakError as err:
