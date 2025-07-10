@@ -35,7 +35,7 @@ async def async_setup_entry(
     coordinator: PVCoordinator = config_entry.runtime_data
     async_add_entities(
         [PowerViewCoverTilt(coordinator)]
-        if coordinator.dev_details.get("model") in ["51", "62"]
+        if coordinator.dev_details.get("model") in ["8", "51", "62"]
         else [PowerViewCover(coordinator)]
     )
 
@@ -129,7 +129,7 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
                 return
             self._target_position = round(target_position)
             try:
-                await self._coord.api.set_position(round(target_position))
+                await self._coord.api.set_position(round(target_position), tilt = self.current_cover_tilt_position )
                 self.async_write_ha_state()
             except BleakError as err:
                 LOGGER.error(
@@ -199,6 +199,14 @@ class PowerViewCoverTilt(PowerViewCover):
     ) -> None:
         LOGGER.debug("%s: init() PowerViewCoverTilt", coordinator.name)
         super().__init__(coordinator)
+
+    @property
+    def current_cover_position(self) -> int | None:  # type: ignore[reportIncompatibleVariableOverride]
+        """Return current position of cover.
+        None is unknown, 0 is closed, 100 is fully open.
+        """
+        pos: Final = self._coord.data.get(ATTR_CURRENT_POSITION)
+        return round(100-pos) if pos is not None else None
 
     @property
     def current_cover_tilt_position(self) -> int | None:  # type: ignore[reportIncompatibleVariableOverride]
