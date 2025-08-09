@@ -285,7 +285,7 @@ class PowerViewBLE:
                     )
             except Exception as ex:
                 LOGGER.error("Error: %s - %s", type(ex).__name__, ex)
-                raise                    
+                raise
             finally:
                 await self.disconnect()
         LOGGER.debug("%s device data: %s", self.name, data)
