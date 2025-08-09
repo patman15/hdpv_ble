@@ -88,7 +88,7 @@ class PowerViewBLE:
             disconnected_callback=self._on_disconnect,
             services=[
                 UUID_COV_SERVICE,
-                # self.UUID_DEV_SERVICE,
+                UUID_DEV_SERVICE,
                 # self.UUID_BAT_SERVICE,
             ],
         )
@@ -283,6 +283,9 @@ class PowerViewBLE:
                         .copy()
                         .decode("UTF-8")
                     )
+            except Exception as ex:
+                LOGGER.error("Error: %s - %s", type(ex).__name__, ex)
+                raise                    
             finally:
                 await self.disconnect()
         LOGGER.debug("%s device data: %s", self.name, data)
@@ -320,7 +323,7 @@ class PowerViewBLE:
             disconnected_callback=self._on_disconnect,
             services=[
                 UUID_COV_SERVICE,
-                # self.UUID_DEV_SERVICE,
+                UUID_DEV_SERVICE,
                 # self.UUID_BAT_SERVICE,
             ],
         )
