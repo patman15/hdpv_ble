@@ -1,9 +1,9 @@
 """Hunter Douglas PowerView BLE API."""
 
 import asyncio
-import time
 from dataclasses import dataclass
 from enum import Enum
+import time
 from typing import Final
 
 from bleak import BleakClient
@@ -16,6 +16,7 @@ from cryptography.hazmat.primitives.ciphers.base import (
     AEADDecryptionContext,
     AEADEncryptionContext,
 )
+
 from homeassistant.components.cover import ATTR_CURRENT_POSITION
 
 from .const import LOGGER, TIMEOUT
@@ -249,7 +250,7 @@ class PowerViewBLE:
     def _verify_response(self, data: bytes, seq_nr: int, cmd: ShadeCmd) -> bool:
         """Verify shade response data."""
         if len(data) < 4:
-            LOGGER.error("Reponse message too short")
+            LOGGER.error("Response message too short")
             return False
         if int.from_bytes(data[0:2], byteorder="little") != cmd.value & 0xFFEF:
             LOGGER.warning("Response to wrong command")

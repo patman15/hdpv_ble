@@ -3,14 +3,8 @@
 from homeassistant.components.bluetooth.passive_update_coordinator import (
     PassiveBluetoothCoordinatorEntity,
 )
-from homeassistant.components.sensor import (
-    SensorEntity,
-    SensorEntityDescription,
-)
-from homeassistant.components.sensor.const import (
-    SensorDeviceClass,
-    SensorStateClass,
-)
+from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
+from homeassistant.components.sensor.const import SensorDeviceClass, SensorStateClass
 from homeassistant.const import (
     ATTR_BATTERY_LEVEL,
     PERCENTAGE,
@@ -67,7 +61,7 @@ class PVSensor(PassiveBluetoothCoordinatorEntity[PVCoordinator], SensorEntity): 
     def __init__(
         self, pv_dev: PVCoordinator, descr: SensorEntityDescription, unique_id: str
     ) -> None:
-        """Intitialize the BMS sensor."""
+        """Initialize the BMS sensor."""
         self._attr_unique_id = f"{DOMAIN}-{unique_id}-{descr.key}"
         self._attr_device_info = pv_dev.device_info
         self.entity_description = descr
