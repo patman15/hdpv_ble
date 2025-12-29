@@ -9,6 +9,10 @@ classifiers = [
 readme      = "README.md"
 requires-python = ">=3.12.0"
 
+[project.urls]
+"Source Code" = "https://github.com/patman15/hdpv_ble/"
+"Bug Reports" = "https://github.com/patman15/hdpv_ble/issues"
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts="--cov=custom_components.hunterdouglas_powerview_ble --cov-report=term-missing --cov-fail-under=100"
