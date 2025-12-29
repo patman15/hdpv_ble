@@ -2,9 +2,9 @@
 
 wheel
 home-assistant-bluetooth
-habluetooth>=3.6.0
+habluetooth>=5.3.0
 bluetooth-adapters
-pytest>=8.3.3
+pytest>=8.4.1
 pytest-cov>=5.0.0
 pytest-socket>=0.7.0
 pytest-asyncio>=0.24.0
@@ -16,11 +16,10 @@ aiohttp
 aiohttp_cors
 aiohttp-fast-url-dispatcher
 aiohttp-zlib-ng
-bleak>=0.22.3
-bleak-retry-connector>=3.6.0
+bleak>=1.0.1
+bleak-retry-connector>=4.4.3
 bluetooth-data-tools
 pyserial-asyncio
 pyudev
-pytest-homeassistant-custom-component==0.13.181
-josepy<2.0.0
+pytest-homeassistant-custom-component==0.13.294
 
