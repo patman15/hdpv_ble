@@ -12,7 +12,11 @@ from homeassistant.components.bluetooth import (
 )
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_ADDRESS
-from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig
+from homeassistant.helpers.selector import (
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+)
 
 from .api import UUID_COV_SERVICE as UUID
 from .const import DOMAIN, LOGGER, MFCT_ID
@@ -62,7 +66,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             return self.async_create_entry(
                 title=self._discovered_device.name,
-                data={"manufacturer_data": self._discovered_device.discovery_info.manufacturer_data[MFCT_ID].hex()},
+                data={
+                    "manufacturer_data": self._discovered_device.discovery_info.manufacturer_data[
+                        MFCT_ID
+                    ].hex()
+                },
             )
 
         self._set_confirm_only()
@@ -88,7 +96,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             return self.async_create_entry(
                 title=self._discovered_device.name,
-                data={"manufacturer_data": self._discovered_device.discovery_info.manufacturer_data[MFCT_ID].hex()},
+                data={
+                    "manufacturer_data": self._discovered_device.discovery_info.manufacturer_data[
+                        MFCT_ID
+                    ].hex()
+                },
             )
 
         current_addresses = self._async_current_ids()
@@ -110,7 +122,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if not self._discovered_devices:
             return self.async_abort(reason="no_devices_found")
 
-        titles = []
+        titles: list[SelectOptionDict] = []
         for address, discovery in self._discovered_devices.items():
             titles.append({"value": address, "label": discovery.name})
 
