@@ -12,14 +12,8 @@ from bleak.exc import BleakError
 from bleak.uuids import normalize_uuid_str
 from bleak_retry_connector import establish_connection
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives.ciphers.base import (
-    AEADDecryptionContext,
-    AEADEncryptionContext,
-)
-from homeassistant.components.cover import (
-    ATTR_CURRENT_POSITION,
-    ATTR_CURRENT_TILT_POSITION,
-)
+from cryptography.hazmat.primitives.ciphers.base import CipherContext
+from homeassistant.components.cover import ATTR_CURRENT_POSITION
 
 from .const import LOGGER, TIMEOUT
 
@@ -103,7 +97,7 @@ class PowerViewBLE:
             disconnected_callback=self._on_disconnect,
             services=[
                 UUID_COV_SERVICE,
-                # self.UUID_DEV_SERVICE,
+                UUID_DEV_SERVICE,
                 # self.UUID_BAT_SERVICE,
             ],
         )
@@ -202,10 +196,10 @@ class PowerViewBLE:
             ("position3", int(data[6])),
             (ATTR_CURRENT_TILT_POSITION, ((pos2 >> 2)/10)), # int(data[7])),
             ("home_id", int.from_bytes(data[0:2], byteorder="little")),
-            ("type_id", int.from_bytes(data[2:3])),
-            ("is_opening", bool(data[3] & 0x3 == 0x2)),
-            ("is_closing", bool(data[3] & 0x3 == 0x1)),
-            ("battery_charging", bool(data[3] & 0x3 == 0x3)),  # observed
+            ("type_id", int(data[2])),
+            ("is_opening", bool(pos & 0x3 == 0x2)),
+            ("is_closing", bool(pos & 0x3 == 0x1)),
+            ("battery_charging", bool(pos & 0x3 == 0x3)),  # observed
             ("battery_level", POWER_LEVELS[(data[8] >> 6)]),  # cannot hit 4
             ("resetMode", bool(data[8] & 0x1)),
             ("resetClock", bool(data[8] & 0x2)),
@@ -251,7 +245,7 @@ class PowerViewBLE:
     async def stop(self) -> None:
         """Stop device movement."""
         LOGGER.debug("%s stop", self.name)
-        await self._cmd((ShadeCmd.STOP, b""))
+        await self._cmd((ShadeCmd.STOP, bytearray()))
 
     async def close(self) -> None:
         """Fully close cover."""
@@ -271,12 +265,13 @@ class PowerViewBLE:
             ),
         )
 
-    def _verify_response(self, din: bytearray, seq_nr: int, cmd: ShadeCmd) -> bool:
+    async def identify(self, beeps: int = 0x3) -> None:
+        """Identify device."""
+        LOGGER.debug("%s identify (%i)", self.name, beeps)
+        await self._cmd((ShadeCmd.IDENTIFY, bytearray([min(beeps, 0xFF)])))
+
+    def _verify_response(self, data: bytearray, seq_nr: int, cmd: ShadeCmd) -> bool:
         """Verify shade response data."""
-        data: bytearray = din
-        if self._cipher is not None and self._is_encrypted:
-            dec: AEADDecryptionContext = self._cipher.decryptor()
-            data = bytearray(dec.update(din) + dec.finalize())
         if len(data) < 4:
             LOGGER.error("Reponse message too short")
             return False
@@ -319,8 +314,8 @@ class PowerViewBLE:
                         .copy()
                         .decode("UTF-8")
                     )
-            except BleakError as ex:
-                LOGGER.debug("%s: querying failed: %s", self.name, ex)
+            except Exception as ex:
+                LOGGER.error("Error: %s - %s", type(ex).__name__, ex)
                 raise
             finally:
                 await self.disconnect()
@@ -336,13 +331,9 @@ class PowerViewBLE:
         LOGGER.debug("%s received BLE data: %s", self.name, data.hex(" "))
         self._data = data
         if self._cipher is not None and self._is_encrypted:
-            dec: AEADDecryptionContext = self._cipher.decryptor()
+            dec: CipherContext = self._cipher.decryptor()
             self._data = bytearray(dec.update(data) + dec.finalize())
-            LOGGER.debug(
-                "%s %s",
-                "decoded data: ".rjust(19 + len(self.name)),
-                self._data.hex(" "),
-            )
+            LOGGER.debug("%s %s", "decoded data: ".rjust(19+len(self.name)), self._data.hex(" "))
 
         self._data_event.set()
 

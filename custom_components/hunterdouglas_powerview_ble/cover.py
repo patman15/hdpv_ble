@@ -127,7 +127,7 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
                 self.is_closing or self.is_opening
             ):
                 return
-            self._target_position = round(target_position)            
+            self._target_position = round(target_position)
             try:
                 await self._coord.api.set_position(round(target_position), tilt = self.current_cover_tilt_position )
                 self.async_write_ha_state()
