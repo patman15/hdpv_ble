@@ -1,6 +1,12 @@
 # pyproject.toml
 
 [project]
+name        = "hunterdouglas_powerview_ble"
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.12"
+]
+readme      = "README.md"
 requires-python = ">=3.12.0"
 
 [tool.pytest.ini_options]
