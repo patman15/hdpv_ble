@@ -66,7 +66,7 @@ def get_shade_key(hub: str, ble_name) -> bytes:
     return dec_resp["data"]
 
 
-def main(hub: str) -> None:
+def main(hub: str) -> int:
     """Extract the homekeys from all shades."""
     try:
         shades_resp: requests.Response = requests.get(
@@ -75,7 +75,7 @@ def main(hub: str) -> None:
         shades_resp.raise_for_status()
     except requests.exceptions.RequestException as ex:
         print(f"Unable to get list of shades:\n\t{ex!s}")
-        return
+        return -1
 
     shades = json.loads(shades_resp.content)
     print(f"Found {len(shades)} shades, interrogating")
@@ -86,6 +86,8 @@ def main(hub: str) -> None:
         print(f"Shade '{name}':")
         print(f"\tBLE name: '{shade['bleName']}'")
         print(f"\tHomeKey: {key.hex()}")
+
+    return 0
 
 
 if __name__ == "__main__":

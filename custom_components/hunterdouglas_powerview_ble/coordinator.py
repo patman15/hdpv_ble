@@ -3,6 +3,7 @@
 from typing import Any
 
 from bleak.backends.device import BLEDevice
+
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth.const import DOMAIN as BLUETOOTH_DOMAIN
 from homeassistant.components.bluetooth.passive_update_coordinator import (
@@ -80,7 +81,7 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
 
     def _async_stop(self) -> None:
         """Shutdown coordinator and any connection."""
-        LOGGER.debug("%s: shuting down BMS device", self.name)
+        LOGGER.debug("%s: shutting down BMS device", self.name)
         self.hass.async_create_task(self.api.disconnect())
         super()._async_stop()
 

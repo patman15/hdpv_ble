@@ -4,7 +4,9 @@
 @license: Apache-2.0 license
 """
 
+from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
+
 from homeassistant.components.bluetooth import async_ble_device_from_address
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -26,7 +28,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntryType) -> bool
     if entry.unique_id is None:
         raise ConfigEntryError("Missing unique ID for device.")
 
-    ble_device = async_ble_device_from_address(
+    ble_device: BLEDevice | None = async_ble_device_from_address(
         hass=hass, address=entry.unique_id, connectable=True
     )
 

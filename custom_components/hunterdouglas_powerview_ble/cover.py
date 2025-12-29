@@ -3,6 +3,7 @@
 from typing import Any, Final
 
 from bleak.exc import BleakError
+
 from homeassistant.components.bluetooth.passive_update_coordinator import (
     PassiveBluetoothCoordinatorEntity,
 )
