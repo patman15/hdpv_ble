@@ -102,13 +102,13 @@ class PowerViewBLE:
             ],
         )
         self._data_event = asyncio.Event()
-        self._data: bytearray = bytearray()
+        self._data: bytes = b""
         self._info: PVDeviceInfo = PVDeviceInfo()
         self._is_encrypted: bool = False
         self._cmd_lock: Final = asyncio.Lock()
         self._cmd_next: tuple[ShadeCmd, bytes]
         self._cipher: Final[Cipher | None] = (
-            Cipher(algorithms.AES(home_key), modes.CTR(bytearray(16)))
+            Cipher(algorithms.AES(home_key), modes.CTR(bytes(16)))
             if len(home_key) == 16
             else None
         )
@@ -244,9 +244,9 @@ class PowerViewBLE:
     async def identify(self, beeps: int = 0x3) -> None:
         """Identify device."""
         LOGGER.debug("%s identify (%i)", self.name, beeps)
-        await self._cmd((ShadeCmd.IDENTIFY, bytearray([min(beeps, 0xFF)])))
+        await self._cmd((ShadeCmd.IDENTIFY, bytes([min(beeps, 0xFF)])))
 
-    def _verify_response(self, data: bytearray, seq_nr: int, cmd: ShadeCmd) -> bool:
+    def _verify_response(self, data: bytes, seq_nr: int, cmd: ShadeCmd) -> bool:
         """Verify shade response data."""
         if len(data) < 4:
             LOGGER.error("Reponse message too short")
@@ -305,10 +305,10 @@ class PowerViewBLE:
 
     def _notification_handler(self, _sender, data: bytearray) -> None:
         LOGGER.debug("%s received BLE data: %s", self.name, data.hex(" "))
-        self._data = data
+        self._data = bytes(data)
         if self._cipher is not None and self._is_encrypted:
-            dec: CipherContext = self._cipher.decryptor()
-            self._data = bytearray(dec.update(data) + dec.finalize())
+            dec: AEADDecryptionContext = self._cipher.decryptor()
+            self._data = bytes(dec.update(bytes(data)) + dec.finalize())
             LOGGER.debug("%s %s", "decoded data: ".rjust(19+len(self.name)), self._data.hex(" "))
 
         self._data_event.set()
