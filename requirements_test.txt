@@ -22,4 +22,5 @@ bluetooth-data-tools
 pyserial-asyncio
 pyudev
 pytest-homeassistant-custom-component==0.13.181
+josepy<2.0.0
 
