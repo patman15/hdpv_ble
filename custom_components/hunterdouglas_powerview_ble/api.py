@@ -207,27 +207,29 @@ class PowerViewBLE:
     async def set_position(
         self,
         pos1: int,
-        pos2: int | None = None,
-        pos3: int | None = None,
-        tilt: int | None = None,
+        pos2: int = 0x8000,
+        pos3: int = 0x8000,
+        tilt: int = 0x8000,
         velocity: int = 0x0,
         disconnect: bool = True,
     ) -> None:
         """Set position of device."""
-        LOGGER.debug("%s setting position to %i, tilt %i", self.name, pos1, tilt)
+        LOGGER.debug(
+            "%s setting position to %i/%i/%i, tilt %i, velocity %s",
+            self.name,
+            pos1,
+            pos2,
+            pos3,
+            tilt,
+            velocity,
+        )
         await self._cmd(
             (
                 ShadeCmd.SET_POSITION,
                 int.to_bytes(pos1, 2, byteorder="little")
-                + int.to_bytes(
-                    pos2 if pos2 is not None else 0x8000, 2, byteorder="little"
-                )
-                + int.to_bytes(
-                    pos3 if pos3 is not None else 0x8000, 2, byteorder="little"
-                )
-                + int.to_bytes(
-                    tilt if tilt is not None else 0x8000, 2, byteorder="little"
-                )
+                + int.to_bytes(pos2, 2, byteorder="little")
+                + int.to_bytes(pos3, 2, byteorder="little")
+                + int.to_bytes(tilt, 2, byteorder="little")
                 + int.to_bytes(velocity, 1),
             ),
             disconnect,
@@ -329,7 +331,11 @@ class PowerViewBLE:
         if self._cipher is not None and self._is_encrypted:
             dec: AEADDecryptionContext = self._cipher.decryptor()
             self._data = bytes(dec.update(bytes(data)) + dec.finalize())
-            LOGGER.debug("%s %s", "decoded data: ".rjust(19+len(self.name)), self._data.hex(" "))
+            LOGGER.debug(
+                "%s %s",
+                "decoded data: ".rjust(19 + len(self.name)),
+                self._data.hex(" "),
+            )
 
         self._data_event.set()
 
