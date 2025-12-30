@@ -25,6 +25,7 @@ Type* | Description
 10 | Duette and Applause SkyLift
 19 | Provenance Woven Wood
 31, 32, 84 | Vignette
+39 | Parkland
 42 | M25T Roller Blind
 49 | AC Roller
 52 | Banded Shades
@@ -84,6 +85,9 @@ In case you have severe troubles,
 - reproduce the issue,
 - disable the log (Home Assistant will prompt you to download the log), and finally
 - [open an issue](https://github.com/patman15/hdpv_ble/issues/new?assignees=&labels=Bug&projects=&template=bug.yml) with a good description of what happened and attach the log.
+
+# Thanks To
+[@mannkind](https://github.com/mannkind)
 
 [license-shield]: https://img.shields.io/github/license/patman15/hdpv_ble.svg?style=for-the-badge
 [releases-shield]: https://img.shields.io/github/release/patman15/hdpv_ble.svg?style=for-the-badge
