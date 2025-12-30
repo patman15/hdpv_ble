@@ -72,11 +72,10 @@ Finally, you need to manually copy the key to [`const.py`](https://github.com/pa
 > [!IMPORTANT]
 > You need to update the file after **each** update!
 
-## Outlook
-- Add support for encryption
-- Allow parallel usage to PowerView app as "remote"
-- Add support for tilt function
-- Add support for further device types
+## Known Issues
+<details><summary>Shade inoperable after charging</summary>
+It seems that the shades require some re-initialization after charging. The solution is currently unknown, but as a workaround you can operate the shade ones using the vendor app.
+</details>
 
 ## Troubleshooting
 In case you have severe troubles,
@@ -89,3 +88,9 @@ In case you have severe troubles,
 [license-shield]: https://img.shields.io/github/license/patman15/hdpv_ble.svg?style=for-the-badge
 [releases-shield]: https://img.shields.io/github/release/patman15/hdpv_ble.svg?style=for-the-badge
 [releases]: https://github.com//patman15/hdpv_ble/releases
+
+## Outlook
+- Add tests!
+- Allow parallel usage to PowerView app as "remote"
+- Add support for tilt function
+- Add support for further device types
