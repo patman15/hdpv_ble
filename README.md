@@ -61,22 +61,21 @@ Installation can be done using [HACS](https://hacs.xyz/) by [adding a custom rep
 1. In the HA UI go to "Configuration" -> "Integrations" click "+" and search for "Hunter Douglas PowerView (BLE)"
 
 ## Set the Encryption Key
-Currently, there are three methods to optain the key:
+Currently, there are three methods to obtain the key:
 
 1. Via adopting a BLE shade: There is a [shade emulator](/emu/PV_BLE_cover) that works with Arduino IDE and an ESP32 device (&ge; 2MiB flash, &ge; 128KiB required), e.g. [Adafruit QT Py ESP32-S3](https://www.adafruit.com/product/5426). Install and connect via serial port, then go to the PowerView app and add the shade `myPVcover` to your home. You will see a log message `set shade key: \xx\xx\xx\xx\xx\xx\xx\xx\xx\xx\xx\xx\xx\xx\xx\xx` . Copy this key. You can delete the shade from the app when done.
 2. Extracting from gateway: This [script](scripts/extract_gateway3_homekey.py) is able to extract the key from a working PowerView gateway.
-3. Grabing from the app: Checkout this [post in the Home Assistant community forum](https://community.home-assistant.io/t/hunter-douglas-powerview-gen-3-integration/424836/228).
+3. Grabbing from the app: Checkout this [post in the Home Assistant community forum](https://community.home-assistant.io/t/hunter-douglas-powerview-gen-3-integration/424836/228).
 
 Finally, you need to manually copy the key to [`const.py`](https://github.com/patman15/hdpv_ble/blob/main/custom_components/hunterdouglas_powerview_ble/const.py).
 
 > [!IMPORTANT]
 > You need to update the file after **each** update!
 
-## Outlook
-- Add support for encryption
-- Allow parallel usage to PowerView app as "remote"
-- Add support for tilt function
-- Add support for further device types
+## Known Issues
+<details><summary>Shade inoperable after charging</summary>
+It seems that the shades require some re-initialization after charging. The solution is currently unknown, but as a workaround you can operate the shade ones using the vendor app.
+</details>
 
 ## Troubleshooting
 In case you have severe troubles,
@@ -89,3 +88,9 @@ In case you have severe troubles,
 [license-shield]: https://img.shields.io/github/license/patman15/hdpv_ble.svg?style=for-the-badge
 [releases-shield]: https://img.shields.io/github/release/patman15/hdpv_ble.svg?style=for-the-badge
 [releases]: https://github.com//patman15/hdpv_ble/releases
+
+## Outlook
+- Add tests!
+- Allow parallel usage to PowerView app as "remote"
+- Add support for tilt function
+- Add support for further device types

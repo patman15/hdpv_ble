@@ -49,7 +49,7 @@ class PVBinarySensor(PassiveBluetoothCoordinatorEntity[PVCoordinator], BinarySen
         descr: BinarySensorEntityDescription,
         unique_id: str,
     ) -> None:
-        """Intialize PV binary sensor."""
+        """Initialize PV binary sensor."""
         self._attr_unique_id = f"{DOMAIN}-{unique_id}-{descr.key}"
         self._attr_device_info = coord.device_info
         self._attr_has_entity_name = True

@@ -1,9 +1,9 @@
 """Hunter Douglas PowerView BLE API."""
 
 import asyncio
-import time
 from dataclasses import dataclass
 from enum import Enum
+import time
 from typing import Final
 
 from bleak import BleakClient
@@ -12,8 +12,15 @@ from bleak.exc import BleakError
 from bleak.uuids import normalize_uuid_str
 from bleak_retry_connector import establish_connection
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives.ciphers.base import CipherContext
-from homeassistant.components.cover import ATTR_CURRENT_POSITION
+from cryptography.hazmat.primitives.ciphers.base import (
+    AEADDecryptionContext,
+    AEADEncryptionContext,
+)
+
+from homeassistant.components.cover import (
+    ATTR_CURRENT_POSITION,
+    ATTR_CURRENT_TILT_POSITION,
+)
 
 from .const import LOGGER, TIMEOUT
 
@@ -102,13 +109,13 @@ class PowerViewBLE:
             ],
         )
         self._data_event = asyncio.Event()
-        self._data: bytearray = bytearray()
+        self._data: bytes = b""
         self._info: PVDeviceInfo = PVDeviceInfo()
+        self._is_encrypted: bool = False
         self._cmd_lock: Final = asyncio.Lock()
         self._cmd_next: tuple[ShadeCmd, bytes]
-        self._is_encrypted: bool = False
         self._cipher: Final[Cipher | None] = (
-            Cipher(algorithms.AES(home_key), modes.CTR(bytearray(16)))
+            Cipher(algorithms.AES(home_key), modes.CTR(bytes(16)))
             if len(home_key) == 16
             else None
         )
@@ -181,20 +188,20 @@ class PowerViewBLE:
             LOGGER.debug("not a V2 record!")
             return []
         # Get the last 4 bits of data[4] and shift them 6 places to the left
-        last_4_bits = (data[4] & 0b1111) << 6 
+        last_4_bits = (data[4] & 0b1111) << 6
         # Get the first 6 bits of data[3]
-        first_6_bits = (data[3] >> 2) & 0b111111 
+        first_6_bits = (data[3] >> 2) & 0b111111
         # Combine them into a single integer
         pos = last_4_bits | first_6_bits
 
-        #LOGGER.debug(f"(bin: {data[3]:08b} - {data[4]:08b} - {data[5]:08b})")
+        # LOGGER.debug(f"(bin: {data[3]:08b} - {data[4]:08b} - {data[5]:08b})")
 
         pos2: Final[int] = (int(data[5]) << 4) + (int(data[4]) >> 4)
         return [
             (ATTR_CURRENT_POSITION, (pos / 10)),
             ("position2", pos2 >> 2),
             ("position3", int(data[6])),
-            (ATTR_CURRENT_TILT_POSITION, ((pos2 >> 2)/10)), # int(data[7])),
+            (ATTR_CURRENT_TILT_POSITION, ((pos2 >> 2) / 10)),  # int(data[7])),
             ("home_id", int.from_bytes(data[0:2], byteorder="little")),
             ("type_id", int(data[2])),
             ("is_opening", bool(pos & 0x3 == 0x2)),
@@ -216,14 +223,14 @@ class PowerViewBLE:
         disconnect: bool = True,
     ) -> None:
         """Set position of device."""
-       
+
         LOGGER.warn("%s setting position to %i, tilt %i", self.name, pos1, tilt)
         await self._cmd(
             (
                 ShadeCmd.SET_POSITION,
-                int.to_bytes(pos1*100, 2, byteorder="little")
+                int.to_bytes(pos1 * 100, 2, byteorder="little")
                 + int.to_bytes(
-                    pos2*100 if pos2 is not None else 0x8000, 2, byteorder="little"
+                    pos2 * 100 if pos2 is not None else 0x8000, 2, byteorder="little"
                 )
                 + int.to_bytes(
                     pos3 if pos3 is not None else 0x8000, 2, byteorder="little"
@@ -236,7 +243,6 @@ class PowerViewBLE:
             disconnect,
         )
 
-
     async def open(self) -> None:
         """Fully open cover."""
         LOGGER.debug("%s open", self.name)
@@ -245,7 +251,7 @@ class PowerViewBLE:
     async def stop(self) -> None:
         """Stop device movement."""
         LOGGER.debug("%s stop", self.name)
-        await self._cmd((ShadeCmd.STOP, bytearray()))
+        await self._cmd((ShadeCmd.STOP, b""))
 
     async def close(self) -> None:
         """Fully close cover."""
@@ -268,12 +274,12 @@ class PowerViewBLE:
     async def identify(self, beeps: int = 0x3) -> None:
         """Identify device."""
         LOGGER.debug("%s identify (%i)", self.name, beeps)
-        await self._cmd((ShadeCmd.IDENTIFY, bytearray([min(beeps, 0xFF)])))
+        await self._cmd((ShadeCmd.IDENTIFY, bytes([min(beeps, 0xFF)])))
 
-    def _verify_response(self, data: bytearray, seq_nr: int, cmd: ShadeCmd) -> bool:
+    def _verify_response(self, data: bytes, seq_nr: int, cmd: ShadeCmd) -> bool:
         """Verify shade response data."""
         if len(data) < 4:
-            LOGGER.error("Reponse message too short")
+            LOGGER.error("Response message too short")
             return False
         if int.from_bytes(data[0:2], byteorder="little") != cmd.value & 0xFFEF:
             LOGGER.warning("Response to wrong command")
@@ -329,11 +335,15 @@ class PowerViewBLE:
 
     def _notification_handler(self, _sender, data: bytearray) -> None:
         LOGGER.debug("%s received BLE data: %s", self.name, data.hex(" "))
-        self._data = data
+        self._data = bytes(data)
         if self._cipher is not None and self._is_encrypted:
-            dec: CipherContext = self._cipher.decryptor()
-            self._data = bytearray(dec.update(data) + dec.finalize())
-            LOGGER.debug("%s %s", "decoded data: ".rjust(19+len(self.name)), self._data.hex(" "))
+            dec: AEADDecryptionContext = self._cipher.decryptor()
+            self._data = bytes(dec.update(bytes(data)) + dec.finalize())
+            LOGGER.debug(
+                "%s %s",
+                "decoded data: ".rjust(19 + len(self.name)),
+                self._data.hex(" "),
+            )
 
         self._data_event.set()
 

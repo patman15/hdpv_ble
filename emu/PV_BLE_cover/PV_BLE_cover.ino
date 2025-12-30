@@ -166,7 +166,7 @@ void decode(BLECharacteristic *pChar) {
   memcpy((void *)&msg, data_dec, 4);
   Serial.printf("\t  message: SRV: %02x, CMD %02x, SEQ %i, LEN %i\n", msg.serviceID, msg.cmdID, msg.sequence, msg.data_len);
 
-  // sepecial responses (static data!)
+  // special responses (static data!)
   const byte ret_valF1DD[] = { 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x87, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };                                                                                                                                                // product info
   const byte ret_valFFDD[] = { 0x00, 0x05, 0xd1, 0xa2, 0x9a, 0x42, 0x59, 0x5d, 0x5c, 0x52, 0x1b, 0x00, 0x00, 0x00, (uint8_t)(SW_VERSION & 0xFF), (uint8_t)(SW_VERSION >> 8), 0x00, 0x00, 0x5f, 0x9c, 0x02, 0x00, 0x5f, 0x9c, 0x02, 0x00, TYP_ID, MODEL_ID, 0x08 };  // HW diagnostics
   const byte ret_valFFDE[] = { 0x08, 0x00, 0x02, 0x26, 0x72, 0x01, 0x59, 0x01, 0x00 };                                                                                                                                                                              // power status
@@ -217,7 +217,7 @@ void decode(BLECharacteristic *pChar) {
       // set shade key
       Serial.print("set shade key: ");
       print_hex(&data_raw[4], data_len - 4, "\\x", "");
-      // set resonse before key, to acknowledge unencrypted
+      // set response before key, to acknowledge unencrypted
       resp_size = set_response(&response, (const message *)data_dec);
       if (msg.data_len == 16) {
         memcpy(home_key, &data_raw[4], 16);
