@@ -35,15 +35,15 @@ async def async_setup_entry(
 
     coordinator: PVCoordinator = config_entry.runtime_data
     model: Final[str|None] = coordinator.dev_details.get("model")
-    entites: list[PowerViewCover] = []
+    entities: list[PowerViewCover] = []
     if model in ["39"]:
-        entites.append(PowerViewCoverTiltOnly(coordinator))
+        entities.append(PowerViewCoverTiltOnly(coordinator))
     elif model in ["51", "62"]:
-        entites.append(PowerViewCoverTilt(coordinator))
+        entities.append(PowerViewCoverTilt(coordinator))
     else:
-        entites.append(PowerViewCover(coordinator))
+        entities.append(PowerViewCover(coordinator))
 
-    async_add_entities(entites)
+    async_add_entities(entities)
 
 
 class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEntity):  # type: ignore[reportIncompatibleVariableOverride]
@@ -203,6 +203,7 @@ class PowerViewCoverTilt(PowerViewCover):
         self,
         coordinator: PVCoordinator,
     ) -> None:
+        """Initialize the shade with tilt."""
         LOGGER.debug("%s: init() PowerViewCoverTilt", coordinator.name)
         super().__init__(coordinator)
 
@@ -273,6 +274,7 @@ class PowerViewCoverTiltOnly(PowerViewCoverTilt):
         self,
         coordinator: PVCoordinator,
     ) -> None:
+        """Initialize the shade with tilt only."""
         LOGGER.debug("%s: init() PowerViewCoverTiltOnly", coordinator.name)
         super().__init__(coordinator)
 
