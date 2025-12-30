@@ -38,8 +38,6 @@ async def async_setup_entry(
     entities: list[PowerViewCover] = []
     if model in ["39"]:
         entities.append(PowerViewCoverTiltOnly(coordinator))
-    elif model in ["51", "62"]:
-        entities.append(PowerViewCoverTilt(coordinator))
     else:
         entities.append(PowerViewCover(coordinator))
 
