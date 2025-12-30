@@ -17,7 +17,10 @@ from cryptography.hazmat.primitives.ciphers.base import (
     AEADEncryptionContext,
 )
 
-from homeassistant.components.cover import ATTR_CURRENT_POSITION
+from homeassistant.components.cover import (
+    ATTR_CURRENT_POSITION,
+    ATTR_CURRENT_TILT_POSITION,
+)
 
 from .const import LOGGER, TIMEOUT
 
@@ -48,7 +51,11 @@ SHADE_TYPE: Final[dict[int, str]] = {
     8: "Duette, Top Down Bottom Up",
     9: "Duette DuoLite, Top Down Bottom Up",
     33: "Duette Architella, Top Down Bottom Up",
+    39: "Parkland",
     47: "Pleated, Top Down Bottom Up",
+    # top down, tilt anywhere
+    51: "Venetian, Tilt Anywhere",
+    62: "Venetian, Tilt Anywhere",
 }
 
 OPEN_POSITION: Final[int] = 100
@@ -138,9 +145,7 @@ class PowerViewBLE:
         return self._client.is_connected
 
     # general cmd: uint16_t cmd, uint8_t seqID, uint8_t data_len
-    async def _cmd(
-        self, cmd: tuple[ShadeCmd, bytes], disconnect: bool = True
-    ) -> None:
+    async def _cmd(self, cmd: tuple[ShadeCmd, bytes], disconnect: bool = True) -> None:
         self._cmd_next = cmd
         if self._cmd_lock.locked():
             LOGGER.debug("%s: device busy, queuing %s command", self.name, cmd[0])
@@ -182,13 +187,13 @@ class PowerViewBLE:
         if len(data) != 9:
             LOGGER.debug("not a V2 record!")
             return []
-        pos: int = int.from_bytes(data[3:5], byteorder="little")
-        pos2: int = (int(data[5]) << 4) + (int(data[4]) >> 4)
+        pos: Final[int] = int.from_bytes(data[3:5], byteorder="little")
+        pos2: Final[int] = (int(data[5]) << 4) + (int(data[4]) >> 4)
         return [
             (ATTR_CURRENT_POSITION, ((pos >> 2) / 10)),
             ("position2", pos2 >> 2),
             ("position3", int(data[6])),
-            ("tilt", int(data[7])),
+            (ATTR_CURRENT_TILT_POSITION, int(data[7])),
             ("home_id", int.from_bytes(data[0:2], byteorder="little")),
             ("type_id", int(data[2])),
             ("is_opening", bool(pos & 0x3 == 0x2)),
@@ -200,16 +205,33 @@ class PowerViewBLE:
         ]
 
     # position cmd: uint16_t pos1, uint16_t pos2, uint16_t pos3, uint16_t tilt, uint8_t velocity
-    async def set_position(self, value: int, disconnect: bool = True) -> None:
+    async def set_position(
+        self,
+        pos1: int,
+        pos2: int = 0x8000,
+        pos3: int = 0x8000,
+        tilt: int = 0x8000,
+        velocity: int = 0x0,
+        disconnect: bool = True,
+    ) -> None:
         """Set position of device."""
-        LOGGER.debug("%s setting position to %i", self.name, value)
+        LOGGER.debug(
+            "%s setting position to %i/%i/%i, tilt %i, velocity %s",
+            self.name,
+            pos1,
+            pos2,
+            pos3,
+            tilt,
+            velocity,
+        )
         await self._cmd(
             (
                 ShadeCmd.SET_POSITION,
-                bytes(
-                    int.to_bytes(value * 100, 2, byteorder="little")
-                    + bytes([0x00, 0x80, 0x00, 0x80, 0x00, 0x80, 0x0])
-                ),
+                int.to_bytes(pos1, 2, byteorder="little")
+                + int.to_bytes(pos2, 2, byteorder="little")
+                + int.to_bytes(pos3, 2, byteorder="little")
+                + int.to_bytes(tilt, 2, byteorder="little")
+                + int.to_bytes(velocity, 1),
             ),
             disconnect,
         )
@@ -291,8 +313,8 @@ class PowerViewBLE:
                         .copy()
                         .decode("UTF-8")
                     )
-            except Exception as ex:
-                LOGGER.error("Error: %s - %s", type(ex).__name__, ex)
+            except BleakError as ex:
+                LOGGER.debug("%s: querying failed: %s", self.name, ex)
                 raise
             finally:
                 await self.disconnect()
@@ -310,7 +332,11 @@ class PowerViewBLE:
         if self._cipher is not None and self._is_encrypted:
             dec: AEADDecryptionContext = self._cipher.decryptor()
             self._data = bytes(dec.update(bytes(data)) + dec.finalize())
-            LOGGER.debug("%s %s", "decoded data: ".rjust(19+len(self.name)), self._data.hex(" "))
+            LOGGER.debug(
+                "%s %s",
+                "decoded data: ".rjust(19 + len(self.name)),
+                self._data.hex(" "),
+            )
 
         self._data_event.set()
 

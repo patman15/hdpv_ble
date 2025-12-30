@@ -9,7 +9,9 @@ from homeassistant.components.bluetooth.passive_update_coordinator import (
 )
 from homeassistant.components.cover import (
     ATTR_CURRENT_POSITION,
+    ATTR_CURRENT_TILT_POSITION,
     ATTR_POSITION,
+    ATTR_TILT_POSITION,
     CoverDeviceClass,
     CoverEntity,
     CoverEntityFeature,
@@ -32,11 +34,18 @@ async def async_setup_entry(
     """Set up the demo cover platform."""
 
     coordinator: PVCoordinator = config_entry.runtime_data
-    async_add_entities([PowerViewCover(coordinator)])
+    model: Final[str|None] = coordinator.dev_details.get("model")
+    entities: list[PowerViewCover] = []
+    if model in ["39"]:
+        entities.append(PowerViewCoverTiltOnly(coordinator))
+    else:
+        entities.append(PowerViewCover(coordinator))
+
+    async_add_entities(entities)
 
 
 class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEntity):  # type: ignore[reportIncompatibleVariableOverride]
-    """Representation of a powerview shade."""
+    """Representation of a PowerView shade with Up/Down functionality only."""
 
     _attr_has_entity_name = True
     _attr_device_class = CoverDeviceClass.SHADE
@@ -52,8 +61,9 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
         coordinator: PVCoordinator,
     ) -> None:
         """Initialize the shade."""
+        LOGGER.debug("%s: init() PowerViewCover", coordinator.name)
         self._attr_name = CoverDeviceClass.SHADE
-        self._coord = coordinator
+        self._coord: PVCoordinator = coordinator
         self._attr_device_info = self._coord.device_info
         self._target_position: int | None = round(
             self._coord.data.get(ATTR_CURRENT_POSITION, OPEN_POSITION)
@@ -171,3 +181,117 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
             self.async_write_ha_state()
         except BleakError as err:
             LOGGER.error("Failed to stop cover '%s': %s", self.name, err)
+
+
+class PowerViewCoverTilt(PowerViewCover):
+    """Representation of a PowerView shade with additional tilt functionality."""
+
+    _attr_supported_features = (
+        CoverEntityFeature.OPEN
+        | CoverEntityFeature.CLOSE
+        | CoverEntityFeature.STOP
+        | CoverEntityFeature.SET_POSITION
+        | CoverEntityFeature.OPEN_TILT
+        | CoverEntityFeature.CLOSE_TILT
+        | CoverEntityFeature.STOP_TILT
+        | CoverEntityFeature.SET_TILT_POSITION
+    )
+
+    def __init__(
+        self,
+        coordinator: PVCoordinator,
+    ) -> None:
+        """Initialize the shade with tilt."""
+        LOGGER.debug("%s: init() PowerViewCoverTilt", coordinator.name)
+        super().__init__(coordinator)
+
+    @property
+    def current_cover_tilt_position(self) -> int | None:  # type: ignore[reportIncompatibleVariableOverride]
+        """Return current tilt of cover.
+
+        None is unknown
+        """
+        pos: Final = self._coord.data.get(ATTR_CURRENT_TILT_POSITION)
+        return round(pos) if pos is not None else None
+
+    async def async_set_cover_tilt_position(self, **kwargs: Any) -> None:
+        """Move the tilt to a specific position."""
+
+        if isinstance(target_position := kwargs.get(ATTR_TILT_POSITION), int):
+            LOGGER.debug("set cover tilt to position %i", target_position)
+            if (
+                self.current_cover_tilt_position == round(target_position)
+                or self.current_cover_position is None
+            ):
+                return
+
+            try:
+                await self._coord.api.set_position(
+                    self.current_cover_position, tilt=target_position
+                )
+                self.async_write_ha_state()
+            except BleakError as err:
+                LOGGER.error(
+                    "Failed to tilt cover '%s' to %f%%: %s",
+                    self.name,
+                    target_position,
+                    err,
+                )
+
+    async def async_stop_cover_tilt(self, **kwargs: Any) -> None:
+        """Stop the cover."""
+        await self.async_stop_cover(kwargs=kwargs)
+
+    async def async_open_cover_tilt(self, **kwargs: Any) -> None:
+        """Open the cover tilt."""
+        LOGGER.debug("open cover tilt")
+        _kwargs = {**kwargs, ATTR_TILT_POSITION: OPEN_POSITION}
+        await self.async_set_cover_tilt_position(**_kwargs)
+
+    async def async_close_cover_tilt(self, **kwargs: Any) -> None:
+        """Close the cover tilt."""
+        LOGGER.debug("close cover tilt")
+        _kwargs = {**kwargs, ATTR_TILT_POSITION: CLOSED_POSITION}
+        await self.async_set_cover_tilt_position(**_kwargs)
+
+
+class PowerViewCoverTiltOnly(PowerViewCoverTilt):
+    """Representation of a PowerView shade with additional tilt functionality."""
+
+    OPENCLOSED_THRESHOLD = 5
+
+    _attr_device_class = CoverDeviceClass.BLIND
+    _attr_supported_features = (
+        CoverEntityFeature.OPEN_TILT
+        | CoverEntityFeature.CLOSE_TILT
+        | CoverEntityFeature.STOP_TILT
+        | CoverEntityFeature.SET_TILT_POSITION
+    )
+
+    def __init__(
+        self,
+        coordinator: PVCoordinator,
+    ) -> None:
+        """Initialize the shade with tilt only."""
+        LOGGER.debug("%s: init() PowerViewCoverTiltOnly", coordinator.name)
+        super().__init__(coordinator)
+
+    @property
+    def is_opening(self) -> bool | None:  # type: ignore[reportIncompatibleVariableOverride]
+        """Return if the cover is opening or not."""
+        return False
+
+    @property
+    def is_closing(self) -> bool | None:  # type: ignore[reportIncompatibleVariableOverride]
+        """Return if the cover is closing or not."""
+        return False
+
+    @property
+    def is_closed(self) -> bool:  # type: ignore[reportIncompatibleVariableOverride]
+        """Return if the cover is closed."""
+        return isinstance(self.current_cover_tilt_position, int) and (
+            self.current_cover_tilt_position
+            >= OPEN_POSITION - PowerViewCoverTiltOnly.OPENCLOSED_THRESHOLD
+            or self.current_cover_tilt_position
+            <= CLOSED_POSITION + PowerViewCoverTiltOnly.OPENCLOSED_THRESHOLD
+        )
