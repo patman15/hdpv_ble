@@ -17,7 +17,10 @@ from cryptography.hazmat.primitives.ciphers.base import (
     AEADEncryptionContext,
 )
 
-from homeassistant.components.cover import ATTR_CURRENT_POSITION
+from homeassistant.components.cover import (
+    ATTR_CURRENT_POSITION,
+    ATTR_CURRENT_TILT_POSITION,
+)
 
 from .const import LOGGER, TIMEOUT
 
@@ -49,6 +52,9 @@ SHADE_TYPE: Final[dict[int, str]] = {
     9: "Duette DuoLite, Top Down Bottom Up",
     33: "Duette Architella, Top Down Bottom Up",
     47: "Pleated, Top Down Bottom Up",
+    # top down, tilt anywhere
+    51: "Venetian, Tilt Anywhere",
+    62: "Venetian, Tilt Anywhere",
 }
 
 OPEN_POSITION: Final[int] = 100
@@ -138,9 +144,7 @@ class PowerViewBLE:
         return self._client.is_connected
 
     # general cmd: uint16_t cmd, uint8_t seqID, uint8_t data_len
-    async def _cmd(
-        self, cmd: tuple[ShadeCmd, bytes], disconnect: bool = True
-    ) -> None:
+    async def _cmd(self, cmd: tuple[ShadeCmd, bytes], disconnect: bool = True) -> None:
         self._cmd_next = cmd
         if self._cmd_lock.locked():
             LOGGER.debug("%s: device busy, queuing %s command", self.name, cmd[0])
@@ -179,16 +183,25 @@ class PowerViewBLE:
     @staticmethod
     def dec_manufacturer_data(data: bytearray) -> list[tuple[str, float]]:
         """Decode manufacturer data from BLE advertisement V2."""
+
         if len(data) != 9:
             LOGGER.debug("not a V2 record!")
             return []
-        pos: int = int.from_bytes(data[3:5], byteorder="little")
-        pos2: int = (int(data[5]) << 4) + (int(data[4]) >> 4)
+        # Get the last 4 bits of data[4] and shift them 6 places to the left
+        last_4_bits = (data[4] & 0b1111) << 6
+        # Get the first 6 bits of data[3]
+        first_6_bits = (data[3] >> 2) & 0b111111
+        # Combine them into a single integer
+        pos = last_4_bits | first_6_bits
+
+        # LOGGER.debug(f"(bin: {data[3]:08b} - {data[4]:08b} - {data[5]:08b})")
+
+        pos2: Final[int] = (int(data[5]) << 4) + (int(data[4]) >> 4)
         return [
-            (ATTR_CURRENT_POSITION, ((pos >> 2) / 10)),
+            (ATTR_CURRENT_POSITION, (pos / 10)),
             ("position2", pos2 >> 2),
             ("position3", int(data[6])),
-            ("tilt", int(data[7])),
+            (ATTR_CURRENT_TILT_POSITION, ((pos2 >> 2) / 10)),  # int(data[7])),
             ("home_id", int.from_bytes(data[0:2], byteorder="little")),
             ("type_id", int(data[2])),
             ("is_opening", bool(pos & 0x3 == 0x2)),
@@ -200,16 +213,32 @@ class PowerViewBLE:
         ]
 
     # position cmd: uint16_t pos1, uint16_t pos2, uint16_t pos3, uint16_t tilt, uint8_t velocity
-    async def set_position(self, value: int, disconnect: bool = True) -> None:
+    async def set_position(
+        self,
+        pos1: int,
+        pos2: int | None = None,
+        pos3: int | None = None,
+        tilt: int | None = None,
+        velocity: int = 0x0,
+        disconnect: bool = True,
+    ) -> None:
         """Set position of device."""
-        LOGGER.debug("%s setting position to %i", self.name, value)
+
+        LOGGER.warn("%s setting position to %i, tilt %i", self.name, pos1, tilt)
         await self._cmd(
             (
                 ShadeCmd.SET_POSITION,
-                bytes(
-                    int.to_bytes(value * 100, 2, byteorder="little")
-                    + bytes([0x00, 0x80, 0x00, 0x80, 0x00, 0x80, 0x0])
-                ),
+                int.to_bytes(pos1 * 100, 2, byteorder="little")
+                + int.to_bytes(
+                    pos2 * 100 if pos2 is not None else 0x8000, 2, byteorder="little"
+                )
+                + int.to_bytes(
+                    pos3 if pos3 is not None else 0x8000, 2, byteorder="little"
+                )
+                + int.to_bytes(
+                    tilt if tilt is not None else 0x8000, 2, byteorder="little"
+                )
+                + int.to_bytes(velocity, 1),
             ),
             disconnect,
         )
@@ -310,7 +339,11 @@ class PowerViewBLE:
         if self._cipher is not None and self._is_encrypted:
             dec: AEADDecryptionContext = self._cipher.decryptor()
             self._data = bytes(dec.update(bytes(data)) + dec.finalize())
-            LOGGER.debug("%s %s", "decoded data: ".rjust(19+len(self.name)), self._data.hex(" "))
+            LOGGER.debug(
+                "%s %s",
+                "decoded data: ".rjust(19 + len(self.name)),
+                self._data.hex(" "),
+            )
 
         self._data_event.set()
 
