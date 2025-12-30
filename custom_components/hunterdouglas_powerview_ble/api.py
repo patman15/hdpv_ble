@@ -227,7 +227,7 @@ class PowerViewBLE:
         await self._cmd(
             (
                 ShadeCmd.SET_POSITION,
-                int.to_bytes(pos1, 2, byteorder="little")
+                int.to_bytes(pos1*100, 2, byteorder="little")
                 + int.to_bytes(pos2, 2, byteorder="little")
                 + int.to_bytes(pos3, 2, byteorder="little")
                 + int.to_bytes(tilt, 2, byteorder="little")
