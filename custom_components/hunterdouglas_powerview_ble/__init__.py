@@ -43,8 +43,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntryType) -> bool
     except BleakError as err:
         raise ConfigEntryNotReady("Unable to query device info.") from err
 
-    # Insert the coordinator in the global registry
-    hass.data.setdefault(DOMAIN, {})
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(coordinator.async_start())
