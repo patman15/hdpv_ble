@@ -8,7 +8,7 @@
 > [!WARNING]
 > - This integration is under development!
 > - Test coverage is low, malfunction might occur. 
-> - Currently only position change is supported (e.g., no tilt)
+> - The HOME_KEY is lost over updates!
 
 ## Features
 - Zero configuration
