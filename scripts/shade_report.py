@@ -71,16 +71,28 @@ GATT_DEV_INFO: list[tuple[str, str]] = [
 # type, 0xFFEE factory-reset).
 #
 # Observed (fw_rev=22, Duette type 6, hardwired):
-#   0xF1DD → 1-byte `04` payload.  Possibly erroring (err code 4 =
-#            Invalid Length) or this firmware genuinely returns a stub.
-#   0xFFDD → 1-byte `04` payload.  Same caveat as F1DD.
-#   0xFFDE → 8-byte payload `XX 01 pp ?? ?? ?? tt 00` where:
+#   0xF1DD → 1-byte `04` payload on len=0 input; 2-byte `8c 00` on len=1;
+#            `04` again for len=2/4/8.  The `8c 00` response is IDENTICAL
+#            to what 0xFFDD returns at len=1, so it's a shared reject
+#            path, not real data.  Conclusion: F1DD is either disabled or
+#            gated on specific non-zero parameter bytes we haven't found.
+#            Standard GATT chars (2a24-2a29) already give us the product
+#            info this opcode would have returned.
+#   0xFFDD → same signature as F1DD: `04` at len∈{0,2,4,8}, `8c 00` at
+#            len=1.  Same conclusion — superseded by GATT 180A service
+#            (manufacturer/model/serial/hw_rev/fw_rev/sw_rev).
+#   0xFFDE → 8-byte payload `XX ?? ?? ?? ?? ?? tt 00` where:
 #              byte 0 (XX) = power type — 0 = hardwired (confirmed);
 #                            1 = battery, 2 = rechargeable (hypothesis,
-#                            unconfirmed — file firmware lacks a
-#                            non-hardwired shade to sample).
-#              byte 2 (pp) = position %
+#                            unconfirmed — no non-hardwired shade
+#                            sampled yet).
 #              byte 6 (tt) = shade type_id (matches advertisement byte 2)
+#            Bytes 1-5 and 7 are unidentified.  They are NOT the coarse
+#            battery % — that already lives in the advert's 2-bit level
+#            field (decoded above into `level_bits`).  Candidates for
+#            the unknown bytes: pack-health %, cycle counter, calibration
+#            values, firmware constants.  Reports from non-hardwired
+#            shades are needed to pin them down.
 #            0xFFDE is the reliable source for battery-vs-hardwired
 #            detection.  The advertisement's 2-bit level field maxes at
 #            3 ("100% or hardwired") and cannot disambiguate the two.
@@ -91,6 +103,38 @@ GET_QUERIES: list[tuple[int, str]] = [
 ]
 
 POWER_LEVELS = {4: 100, 3: 100, 2: 50, 1: 20, 0: 0}
+
+# PowerView BLE error-response shape (see api.py _verify_response): when a
+# query's response has data_len=1, byte 4 is an error code rather than real
+# payload.  Expand this dict as users report codes from different firmwares.
+PV_ERROR_CODES: dict[int, str] = {
+    0x04: "invalid length (hypothesis)",
+}
+
+# Observed two-byte error signatures.  fw_rev=22 returns `8c 00` for both
+# 0xF1DD and 0xFFDD with a 1-byte input — identical bytes across two
+# semantically different opcodes, so this is a shared reject path rather
+# than opcode-specific data.  Suspected meaning: "unsupported / bad
+# parameter", but not confirmed.
+PV_ERROR_SIGNATURES_2B: dict[bytes, str] = {
+    b"\x8c\x00": "generic reject (hypothesis; fw_rev=22, F1DD+FFDD)",
+}
+
+# 0xFFDE byte 0 — power type.  0 is confirmed hardwired on fw_rev=22.
+# 1/2 are hypotheses pending sample data from battery/rechargeable shades.
+POWER_TYPE_LABELS: dict[int, str] = {
+    0: "hardwired",
+    1: "battery (hypothesis)",
+    2: "rechargeable (hypothesis)",
+}
+
+# Emulator-confirmed success-response lengths (see emu/PV_BLE_cover.ino).
+# Used to flag a real shade's 1-byte reply as "way shorter than expected".
+EXPECTED_QUERY_LEN: dict[int, int] = {
+    0xF1DD: 14,
+    0xFFDD: 29,
+    0xFFDE: 8,
+}
 
 SCAN_TIMEOUT = 30.0
 CMD_TIMEOUT = 30.0
@@ -241,12 +285,157 @@ def _section(title: str) -> None:
     print(f"  {'-' * len(title)}")
 
 
+def annotate_query(cmd: int, payload: bytes) -> str | None:
+    """Return a one-line decode of a query response, or None if unknown.
+
+    Printed beneath the raw hex so reporters see both.  Everything
+    marked "hypothesis" still needs cross-shade confirmation — that's
+    the whole point of this report.
+    """
+    expected = EXPECTED_QUERY_LEN.get(cmd)
+    # Shade returned a 1-byte reply where we know a longer one is valid:
+    # standard PowerView error-response shape — byte is an error code.
+    if expected and len(payload) == 1 and expected > 1:
+        err = payload[0]
+        note = PV_ERROR_CODES.get(err, "unknown error code")
+        return (
+            f"likely error code 0x{err:02X} ({note}); "
+            f"emulator returns {expected} B on success"
+        )
+    if cmd == 0xFFDE and len(payload) == 8:
+        pt = payload[0]
+        label = POWER_TYPE_LABELS.get(pt, f"unknown ({pt})")
+        # Only byte 0 (power type) and byte 6 (type_id) are identified.
+        # Battery % already comes from the advert's 2-bit level field, so
+        # byte 2 is NOT a battery-% duplicate.  Bytes 1-5 and 7 remain
+        # unknown — plausible candidates include pack health %, cycle
+        # counters, calibration values, or firmware constants.  Reports
+        # from non-hardwired shades should help disambiguate.
+        return (
+            f"power_type={pt} ({label}), type_id={payload[6]} "
+            f"(cross-check with advert). Other bytes unidentified — "
+            f"share them verbatim to help decode."
+        )
+    return None
+
+
+# Payload lengths to try when --probe is set.  Small, zero-filled inputs
+# only — we are varying length to see which values the firmware accepts,
+# not guessing parameter content.  Kept short because longer sweeps take
+# longer to run and each probe is an encrypted BLE round-trip.
+PROBE_LENGTHS: list[int] = [0, 1, 2, 4, 8]
+
+# Opcodes we'll probe.  MUST only contain documented read-only GETs;
+# never add a SET/move/scene/rekey/reset opcode here (see SAFETY note in
+# the module docstring).
+PROBE_OPCODES: list[tuple[int, str]] = [
+    (0xF1DD, "product info"),
+    (0xFFDD, "HW diagnostics"),
+]
+
+
+async def probe_opcode(api: PowerViewClient, cmd: int, label: str) -> None:
+    """Sweep zero-filled input payloads across PROBE_LENGTHS.
+
+    Tag policy: `HIT` only when the response length matches what the
+    emulator returns on success (EXPECTED_QUERY_LEN).  Anything shorter
+    is flagged `short?`; shorter-than-3 is almost certainly an error
+    shape — fw_rev=22 has been observed returning both 1-byte (`04`)
+    and 2-byte (`8c 00`) rejections, the latter being the *same* for
+    different opcodes, so a short payload is not proof of a real hit.
+    """
+    expected = EXPECTED_QUERY_LEN.get(cmd, 0)
+    print(f"  0x{cmd:04X} {label} (expect {expected} B on success):")
+    for n in PROBE_LENGTHS:
+        data = bytes(n)
+        try:
+            payload = await api.query(cmd, data)
+            if expected and len(payload) == expected:
+                tag = "HIT   "
+            elif len(payload) < 3:
+                tag = "error?"
+            else:
+                tag = "short?"
+            hex_display = payload.hex(" ") if payload else "(empty)"
+            print(
+                f"    len={n:2} → "
+                f"{tag} ({len(payload):2} B): {hex_display}"
+            )
+        except Exception as ex:  # noqa: BLE001
+            print(f"    len={n:2} → FAILED — {ex}")
+
+
+def _print_advertisement(device: BLEDevice, adv: AdvertisementData) -> None:
+    """Print section 1: the BLE advertisement (raw + decoded)."""
+    print(f"  address:  {device.address}")
+    print(f"  rssi:     {adv.rssi} dBm")
+    manuf = adv.manufacturer_data.get(MFCT_ID, b"")
+    print(f"  raw:      {manuf.hex(' ') if manuf else '(none)'}")
+    decoded = decode_adv(manuf)
+    if not decoded:
+        return
+    print(f"  home_id:  0x{decoded['home_id']:04x}")
+    print(f"  type_id:  {decoded['type_id']}")
+    print(
+        f"  position: {decoded['position']}  "
+        f"pos2={decoded['position2']}  pos3={decoded['position3']}  "
+        f"tilt={decoded['tilt']}"
+    )
+    print(
+        f"  flags:    opening={decoded['opening']}  "
+        f"closing={decoded['closing']}  "
+        f"charging_flag={decoded['charging_flag']}"
+    )
+    print(
+        f"  level:    bits={decoded['level_bits']} "
+        f"(→ {decoded['level_pct']}%; cannot report hardwired=4)"
+    )
+
+
+async def _print_gatt_info(api: PowerViewClient) -> None:
+    """Print section 2: standard GATT device-info characteristics."""
+    for key, uuid in GATT_DEV_INFO:
+        try:
+            value = (await api.read_gatt(uuid)).decode("utf-8", errors="replace")
+            print(f"  {key:13} {value}")
+        except Exception as ex:  # noqa: BLE001
+            print(f"  {key:13} <error: {ex}>")
+
+
+async def _print_queries(api: PowerViewClient) -> None:
+    """Print section 3: read-only protocol queries."""
+    for cmd, label in GET_QUERIES:
+        try:
+            payload = await api.query(cmd)
+            print(
+                f"  0x{cmd:04X} {label:16} "
+                f"({len(payload):2} B): {payload.hex(' ')}"
+            )
+            note = annotate_query(cmd, payload)
+            if note:
+                print(f"         → {note}")
+        except Exception as ex:  # noqa: BLE001
+            print(f"  0x{cmd:04X} {label:16} FAILED — {ex}")
+            break
+
+
+async def _print_probe(api: PowerViewClient) -> None:
+    """Print section 4: payload-length sweep over read-only probe opcodes."""
+    for cmd, label in PROBE_OPCODES:
+        try:
+            await probe_opcode(api, cmd, label)
+        except Exception as ex:  # noqa: BLE001
+            print(f"  0x{cmd:04X} probe aborted — {ex}")
+            break
+
+
 async def report_shade(
     friendly_name: str,
     ble_name: str,
     home_key: bytes,
     device: BLEDevice | None,
     adv: AdvertisementData | None,
+    probe: bool = False,
 ) -> None:
     """Print the full report for a single shade: advertisement + GATT + queries."""
     print(f"\n=== '{friendly_name}'  (BLE: {ble_name}) ===")
@@ -255,49 +444,18 @@ async def report_shade(
     if device is None or adv is None:
         print("  not seen on air within scan window — skipping BLE queries")
         return
-    print(f"  address:  {device.address}")
-    print(f"  rssi:     {adv.rssi} dBm")
-    manuf = adv.manufacturer_data.get(MFCT_ID, b"")
-    print(f"  raw:      {manuf.hex(' ') if manuf else '(none)'}")
-    decoded = decode_adv(manuf)
-    if decoded:
-        print(f"  home_id:  0x{decoded['home_id']:04x}")
-        print(f"  type_id:  {decoded['type_id']}")
-        print(
-            f"  position: {decoded['position']}  "
-            f"pos2={decoded['position2']}  pos3={decoded['position3']}  "
-            f"tilt={decoded['tilt']}"
-        )
-        print(
-            f"  flags:    opening={decoded['opening']}  "
-            f"closing={decoded['closing']}  "
-            f"charging_flag={decoded['charging_flag']}"
-        )
-        print(
-            f"  level:    bits={decoded['level_bits']} "
-            f"(→ {decoded['level_pct']}%; cannot report hardwired=4)"
-        )
+    _print_advertisement(device, adv)
 
     async with PowerViewClient(device, home_key) as api:
         _section("2. GATT device info")
-        for key, uuid in GATT_DEV_INFO:
-            try:
-                value = (await api.read_gatt(uuid)).decode("utf-8", errors="replace")
-                print(f"  {key:13} {value}")
-            except Exception as ex:  # noqa: BLE001
-                print(f"  {key:13} <error: {ex}>")
+        await _print_gatt_info(api)
 
         _section("3. Protocol queries (read-only)")
-        for cmd, label in GET_QUERIES:
-            try:
-                payload = await api.query(cmd)
-                print(
-                    f"  0x{cmd:04X} {label:16} "
-                    f"({len(payload):2} B): {payload.hex(' ')}"
-                )
-            except Exception as ex:  # noqa: BLE001
-                print(f"  0x{cmd:04X} {label:16} FAILED — {ex}")
-                break
+        await _print_queries(api)
+
+        if probe:
+            _section("4. Probe (payload-length sweep, read-only opcodes)")
+            await _print_probe(api)
 
 
 # --- Main ----------------------------------------------------------
@@ -310,6 +468,7 @@ async def run(
     all_shades: bool,
     scan_timeout: float,
     verbose: bool,
+    probe: bool = False,
 ) -> int:
     """Fetch the shade list, homekey, then report on each target."""
     if verbose:
@@ -368,7 +527,7 @@ async def run(
         # Per-shade timeout so one unreachable shade can't stall the whole run.
         try:
             await asyncio.wait_for(
-                report_shade(friendly, ble, home_key, dev, adv),
+                report_shade(friendly, ble, home_key, dev, adv, probe=probe),
                 timeout=PER_SHADE_TIMEOUT,
             )
         except TimeoutError:
@@ -398,13 +557,29 @@ def main() -> int:
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable debug logging"
     )
+    parser.add_argument(
+        "--probe",
+        action="store_true",
+        help=(
+            "Sweep payload lengths for 0xF1DD/0xFFDD to find what the "
+            "firmware accepts.  Read-only; slow (one BLE round-trip per "
+            "length).  Share the output to help decode these opcodes."
+        ),
+    )
     args = parser.parse_args()
 
     targets: list[tuple[str, str]] | None = None
     if args.ble_name:
         targets = [(ble, ble) for ble in args.ble_name]
     return asyncio.run(
-        run(args.hub, targets, args.all, args.scan_timeout, args.verbose)
+        run(
+            args.hub,
+            targets,
+            args.all,
+            args.scan_timeout,
+            args.verbose,
+            probe=args.probe,
+        )
     )
 
 
