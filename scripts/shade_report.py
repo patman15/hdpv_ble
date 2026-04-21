@@ -81,28 +81,58 @@ GATT_DEV_INFO: list[tuple[str, str]] = [
 #   0xFFDD → same signature as F1DD: `04` at len∈{0,2,4,8}, `8c 00` at
 #            len=1.  Same conclusion — superseded by GATT 180A service
 #            (manufacturer/model/serial/hw_rev/fw_rev/sw_rev).
-#   0xFFDE → 8-byte payload `XX ?? ?? ?? ?? ?? tt 00` where:
-#              byte 0 (XX) = power type — 0 = hardwired (confirmed);
-#                            1 = battery, 2 = rechargeable (hypothesis,
-#                            unconfirmed — no non-hardwired shade
-#                            sampled yet).
-#              byte 6 (tt) = shade type_id (matches advertisement byte 2)
-#            Bytes 1-5 and 7 are unidentified.  They are NOT the coarse
-#            battery % — that already lives in the advert's 2-bit level
-#            field (decoded above into `level_bits`).  Candidates for
-#            the unknown bytes: pack-health %, cycle counter, calibration
-#            values, firmware constants.  Reports from non-hardwired
-#            shades are needed to pin them down.
-#            0xFFDE is the reliable source for battery-vs-hardwired
-#            detection.  The advertisement's 2-bit level field maxes at
-#            3 ("100% or hardwired") and cannot disambiguate the two.
+#   0xFFDE → 8-byte payload.  Byte-by-byte findings on hardwired Duette
+#            (type 6, fw_rev=22), verified across four shades and ~10
+#            targeted motion/idle experiments on one unit:
+#              b0 power_type   0=hardwired (confirmed); 1=battery,
+#                              2=rechargeable (hypothesis — no non-
+#                              hardwired sample yet).
+#              b1 = 0x01       constant on all hardwired shades seen.
+#                              Likely a power-type subvariant or flags
+#                              byte; pending a non-hardwired sample.
+#              b2 = 0x64 (100) strong hypothesis: battery/power-level
+#                              %, pegged at 100 on wall power.  A
+#                              battery shade should report its real %
+#                              here.  NOT a duplicate of the advert's
+#                              2-bit level field — this is the full
+#                              byte-resolution value.
+#              b3              live / noisy byte — read-to-read drift
+#                              of 3-9 counts with no physical change.
+#                              Too jittery to be temperature; best
+#                              guess is radio or ADC telemetry.  Not
+#                              practically useful without a burst-
+#                              capture characterization.
+#              b4 = 0x07       constant on all hardwired shades seen.
+#                              Likely capability or power-config flags.
+#              b5              persistent per-shade state.  Observed
+#                              to change exactly once across ~10
+#                              experiments on one unit (227 -> 205
+#                              during the first commanded move of a
+#                              session).  Each idle shade holds its
+#                              own stable value (114/127/139/205 seen
+#                              at position=100%).  Triggers RULED OUT:
+#                              every move, cold-start after 15-min
+#                              idle, short-period timer, distance-
+#                              gated motion snapshot, top & bottom
+#                              end-stop calibration.  Remaining
+#                              candidates: boot-triggered state,
+#                              long-period (hours+) timer, or hub-
+#                              initiated refresh.
+#              b6 type_id      matches advertisement byte 2 (confirmed).
+#              b7 = 0x00       reserved / padding on all observations.
+#            All b1-b7 findings are fw_rev=22 hardwired-only; re-verify
+#            on battery / rechargeable hardware before relying on them.
+#            0xFFDE remains the only reliable source for battery-vs-
+#            hardwired detection (the advert's 2-bit level field caps
+#            at 3 = "100% OR hardwired" and cannot disambiguate).
 GET_QUERIES: list[tuple[int, str]] = [
     (0xF1DD, "product info"),
     (0xFFDD, "HW diagnostics"),
     (0xFFDE, "power status"),
 ]
 
-POWER_LEVELS = {4: 100, 3: 100, 2: 50, 1: 20, 0: 0}
+# Advert level field is 2 bits, so only values 0-3 are observable on the wire.
+POWER_LEVELS = {3: 100, 2: 50, 1: 20, 0: 0}
 
 # PowerView BLE error-response shape (see api.py _verify_response): when a
 # query's response has data_len=1, byte 4 is an error code rather than real
@@ -305,16 +335,29 @@ def annotate_query(cmd: int, payload: bytes) -> str | None:
     if cmd == 0xFFDE and len(payload) == 8:
         pt = payload[0]
         label = POWER_TYPE_LABELS.get(pt, f"unknown ({pt})")
-        # Only byte 0 (power type) and byte 6 (type_id) are identified.
-        # Battery % already comes from the advert's 2-bit level field, so
-        # byte 2 is NOT a battery-% duplicate.  Bytes 1-5 and 7 remain
-        # unknown — plausible candidates include pack health %, cycle
-        # counters, calibration values, or firmware constants.  Reports
-        # from non-hardwired shades should help disambiguate.
+        # Per-byte interpretations as of 2026-04-21 investigation (see
+        # module-level comment for the experiment log).  b0 and b6 are
+        # confirmed; b1/b2/b4/b7 are strong hypotheses based on four
+        # hardwired shades at fw_rev=22; b3 is a live noisy byte; b5 is
+        # persistent per-shade state with an unknown refresh trigger.
+        # 11-space indent on continuation lines aligns with the "→ "
+        # prefix added by _print_queries (9 spaces + arrow + space).
+        indent = "           "
         return (
-            f"power_type={pt} ({label}), type_id={payload[6]} "
-            f"(cross-check with advert). Other bytes unidentified — "
-            f"share them verbatim to help decode."
+            f"byte 0 = 0x{payload[0]:02X} → power_type={pt} ({label})\n"
+            f"{indent}byte 1 = 0x{payload[1]:02X} → power-subtype/flags "
+            f"(const 0x01 on hardwired; hypothesis)\n"
+            f"{indent}byte 2 = 0x{payload[2]:02X} ({payload[2]}) → "
+            f"battery/power level % (hypothesis — pegged at 100 on hardwired)\n"
+            f"{indent}byte 3 = 0x{payload[3]:02X} → live/noisy byte "
+            f"(drifts between reads; radio or ADC telemetry)\n"
+            f"{indent}byte 4 = 0x{payload[4]:02X} → capability/config flags "
+            f"(const 0x07 on hardwired; hypothesis)\n"
+            f"{indent}byte 5 = 0x{payload[5]:02X} → persistent per-shade state "
+            f"(rarely updates; refresh trigger unknown)\n"
+            f"{indent}byte 6 = 0x{payload[6]:02X} → type_id={payload[6]} "
+            f"(cross-check with advert)\n"
+            f"{indent}byte 7 = 0x{payload[7]:02X} → reserved/padding"
         )
     return None
 
@@ -387,8 +430,7 @@ def _print_advertisement(device: BLEDevice, adv: AdvertisementData) -> None:
         f"charging_flag={decoded['charging_flag']}"
     )
     print(
-        f"  level:    bits={decoded['level_bits']} "
-        f"(→ {decoded['level_pct']}%; cannot report hardwired=4)"
+        f"  level:    bits={decoded['level_bits']} (→ {decoded['level_pct']}%)"
     )
 
 
