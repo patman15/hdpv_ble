@@ -1,5 +1,6 @@
 """Constants for the BLE Battery Management System integration."""
 
+from enum import IntEnum
 import logging
 from typing import Final
 
@@ -10,6 +11,16 @@ TIMEOUT: Final[int] = 5
 
 CONF_HOME_KEY: Final[str] = "home_key"
 CONF_HUB_URL: Final[str] = "hub_url"
+CONF_POWER_TYPES: Final[str] = "power_types"
+
+
+class PowerType(IntEnum):
+    """Shade power source. Values match the BLE 0xFFDE reply's byte 0."""
+
+    HARDWIRED = 0
+    BATTERY = 1
+    RECHARGEABLE = 2
+
 
 # dispatcher signal for newly discovered shades (format with entry_id)
 SIGNAL_NEW_SHADE: Final[str] = f"{DOMAIN}_new_shade_{{entry_id}}"

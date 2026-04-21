@@ -287,7 +287,9 @@ class PowerViewCoverTiltOnClosed(PowerViewCoverTilt):
                 await self._coord.api.close(velocity=self._coord.velocity)
                 self.async_write_ha_state()
             except BleakError as err:
-                LOGGER.error("Failed to close cover '%s' before tilt: %s", self.name, err)
+                LOGGER.error(
+                    "Failed to close cover '%s' before tilt: %s", self.name, err
+                )
                 self._reset_target_position()
             return
         await super().async_set_cover_tilt_position(**kwargs)
@@ -312,7 +314,11 @@ class PowerViewCoverTopDown(PowerViewCover):
         target_position: Final = kwargs.get(ATTR_POSITION)
         if target_position is not None:
             inverted = OPEN_POSITION - round(target_position)
-            LOGGER.debug("set top-down cover to position %f (device %i)", target_position, inverted)
+            LOGGER.debug(
+                "set top-down cover to position %f (device %i)",
+                target_position,
+                inverted,
+            )
             if self.current_cover_position == round(target_position) and not (
                 self.is_closing or self.is_opening
             ):
@@ -339,7 +345,9 @@ class PowerViewCoverTopDown(PowerViewCover):
             return
         try:
             self._target_position = OPEN_POSITION
-            await self._coord.api.set_position(CLOSED_POSITION, velocity=self._coord.velocity)
+            await self._coord.api.set_position(
+                CLOSED_POSITION, velocity=self._coord.velocity
+            )
             self.async_write_ha_state()
         except BleakError as err:
             LOGGER.error("Failed to open cover '%s': %s", self.name, err)
@@ -352,7 +360,9 @@ class PowerViewCoverTopDown(PowerViewCover):
             return
         try:
             self._target_position = CLOSED_POSITION
-            await self._coord.api.set_position(OPEN_POSITION, velocity=self._coord.velocity)
+            await self._coord.api.set_position(
+                OPEN_POSITION, velocity=self._coord.velocity
+            )
             self.async_write_ha_state()
         except BleakError as err:
             LOGGER.error("Failed to close cover '%s': %s", self.name, err)

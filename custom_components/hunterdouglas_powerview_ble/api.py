@@ -22,7 +22,7 @@ from homeassistant.components.cover import (
     ATTR_CURRENT_TILT_POSITION,
 )
 
-from .const import LOGGER, TIMEOUT
+from .const import LOGGER, TIMEOUT, PowerType
 
 UUID_COV_SERVICE: Final[str] = normalize_uuid_str("fdc1")
 UUID_TX: Final[str] = "cafe1001-c0ff-ee01-8000-a110ca7ab1e0"
@@ -73,6 +73,7 @@ SHADE_TYPE: Final[dict[int, str]] = {
     65: "Dual Overlapped",
     95: "Dual Overlapped Illuminated",
 }
+
 
 class ShadeCapability(NamedTuple):
     """Capability flags for a shade type."""
@@ -126,8 +127,7 @@ OPEN_POSITION: Final[int] = 100
 CLOSED_POSITION: Final[int] = 0
 
 POWER_LEVELS: Final[dict[int, int]] = {
-    4: 100,  # 4 is hardwired
-    3: 100,  # 3 = 100% to 51% power remaining
+    3: 100,  # 3 = 100% to 51% power remaining (also reported by hardwired)
     2: 50,  # 2 = 50% to 21% power remaining
     1: 20,  # 1 = 20% or less power remaining
     0: 0,  # 0 = No power remaining
@@ -141,6 +141,7 @@ class ShadeCmd(Enum):
     STOP = 0xB8F7
     ACTIVATE_SCENE = 0xBAF7
     IDENTIFY = 0x11F7
+    POWER_STATUS = 0xDEFF
 
 
 @dataclass
@@ -209,6 +210,28 @@ class PowerViewBLE:
         """Return whether remote device is connected."""
         return self._client.is_connected
 
+    async def _transact(self, cmd: tuple[ShadeCmd, bytes]) -> int:
+        # Assumes _cmd_lock is held and _connect() has run. Writes a framed
+        # (optionally encrypted) request and waits for the device's reply;
+        # caller inspects/validates self._data afterwards. Returns the seq
+        # number used so callers can verify the echo.
+        tx_data: bytes = bytes(
+            int.to_bytes(cmd[0].value, 2, byteorder="little")
+            + bytes([self._seqcnt, len(cmd[1])])
+            + cmd[1]
+        )
+        LOGGER.debug("sending cmd: %s", tx_data.hex(" "))
+        if self._cipher is not None and self._is_encrypted:
+            enc: AEADEncryptionContext = self._cipher.encryptor()
+            tx_data = enc.update(tx_data) + enc.finalize()
+            LOGGER.debug("  encrypted: %s", tx_data.hex(" "))
+        self._data_event.clear()
+        await self._client.write_gatt_char(UUID_TX, tx_data, False)
+        seq = self._seqcnt
+        self._seqcnt += 1
+        await asyncio.wait_for(self._wait_event(), timeout=TIMEOUT)
+        return seq
+
     # general cmd: uint16_t cmd, uint8_t seqID, uint8_t data_len
     async def _cmd(self, cmd: tuple[ShadeCmd, bytes], disconnect: bool = True) -> None:
         self._cmd_next = cmd
@@ -220,23 +243,9 @@ class PowerViewBLE:
             try:
                 await self._connect()
                 cmd_run: tuple[ShadeCmd, bytes] = self._cmd_next
-                tx_data: bytes = bytes(
-                    int.to_bytes(cmd_run[0].value, 2, byteorder="little")
-                    + bytes([self._seqcnt, len(cmd_run[1])])
-                    + cmd_run[1]
-                )
-                LOGGER.debug("sending cmd: %s", tx_data.hex(" "))
-                if self._cipher is not None and self._is_encrypted:
-                    enc: AEADEncryptionContext = self._cipher.encryptor()
-                    tx_data = enc.update(tx_data) + enc.finalize()
-                    LOGGER.debug("  encrypted: %s", tx_data.hex(" "))
-                self._data_event.clear()
-                await self._client.write_gatt_char(UUID_TX, tx_data, False)
-                self._seqcnt += 1
-                LOGGER.debug("waiting for response")
                 try:
-                    await asyncio.wait_for(self._wait_event(), timeout=TIMEOUT)
-                    self._verify_response(self._data, self._seqcnt - 1, cmd_run[0])
+                    seq = await self._transact(cmd_run)
+                    self._verify_ack_reply(self._data, seq, cmd_run[0])
                 except TimeoutError as ex:
                     raise TimeoutError("Device did not send confirmation.") from ex
                 finally:
@@ -245,6 +254,22 @@ class PowerViewBLE:
             except Exception as ex:
                 LOGGER.error("Error: %s - %s", type(ex).__name__, ex)
                 raise
+
+    async def _query(self, cmd: tuple[ShadeCmd, bytes]) -> bytes:
+        """Send a read-type opcode and return its payload bytes."""
+        async with self._cmd_lock:
+            await self._connect()
+            try:
+                try:
+                    seq = await self._transact(cmd)
+                except TimeoutError as ex:
+                    raise TimeoutError("Device did not send response.") from ex
+                if not self._verify_header(self._data, seq, cmd[0]):
+                    raise BleakError("Malformed query response header")
+                length = int(self._data[3])
+                return bytes(self._data[4 : 4 + length])
+            finally:
+                await self._client.disconnect()
 
     @staticmethod
     def dec_manufacturer_data(data: bytearray) -> dict[str, float | int | bool]:
@@ -271,7 +296,7 @@ class PowerViewBLE:
             "is_opening": bool(flags == 0x2),
             "is_closing": bool(flags == 0x1),
             "battery_charging": bool(flags == 0x3),  # observed
-            "battery_level": POWER_LEVELS[(data[8] >> 6)],  # cannot hit 4
+            "battery_level": POWER_LEVELS[(data[8] >> 6)],
             "resetMode": bool(data[8] & 0x1),
             "resetClock": bool(data[8] & 0x2),
         }
@@ -341,8 +366,8 @@ class PowerViewBLE:
         LOGGER.debug("%s identify (%i)", self.name, beeps)
         await self._cmd((ShadeCmd.IDENTIFY, bytes([min(beeps, 0xFF)])))
 
-    def _verify_response(self, data: bytes, seq_nr: int, cmd: ShadeCmd) -> bool:
-        """Verify shade response data."""
+    def _verify_header(self, data: bytes, seq_nr: int, cmd: ShadeCmd) -> bool:
+        """Verify common header fields (length, echoed opcode, seq match)."""
         if len(data) < 4:
             LOGGER.error("Response message too short")
             return False
@@ -353,6 +378,12 @@ class PowerViewBLE:
             LOGGER.warning(
                 "Response sequence id %i wrong, expected %d", int(data[2]), seq_nr
             )
+            return False
+        return True
+
+    def _verify_ack_reply(self, data: bytes, seq_nr: int, cmd: ShadeCmd) -> bool:
+        """Verify an ack-only reply (1-byte status payload, 0 == success)."""
+        if not self._verify_header(data, seq_nr, cmd):
             return False
         if int(data[3]) != 1:
             LOGGER.error("Wrong response data length")
@@ -392,6 +423,37 @@ class PowerViewBLE:
                 await self.disconnect()
         LOGGER.debug("%s device data: %s", self.name, data)
         return data.copy()
+
+    async def query_power_type(self) -> PowerType | None:
+        """Return the shade's power source, or None if unknown/unavailable."""
+        if self._cipher is None:
+            return None
+        try:
+            payload = await self._query((ShadeCmd.POWER_STATUS, b""))
+        except (BleakError, TimeoutError) as ex:
+            LOGGER.debug("%s: power_type query failed: %s", self.name, ex)
+            return None
+
+        # A 1-byte reply is an error code (e.g. 0x04 = invalid length); it
+        # must NOT be returned as a power_type or it would be misread as
+        # PowerType.value=4.
+        if len(payload) == 1:
+            LOGGER.debug(
+                "%s: power_type query rejected (err=0x%02X)", self.name, payload[0]
+            )
+            return None
+        if len(payload) == 8:
+            try:
+                return PowerType(payload[0])
+            except ValueError:
+                LOGGER.debug(
+                    "%s: unknown power_type byte 0x%02X", self.name, payload[0]
+                )
+                return None
+        LOGGER.debug(
+            "%s: unexpected power_type payload length %d", self.name, len(payload)
+        )
+        return None
 
     def _on_disconnect(self, client: BleakClient) -> None:
         """Disconnect callback function."""

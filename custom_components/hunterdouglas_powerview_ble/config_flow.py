@@ -69,9 +69,7 @@ def _parse_key_response(ble_name: str, result: dict) -> bytes | None:  # noqa: P
         )
         return None
     if response_bytes[4] != 0:
-        LOGGER.warning(
-            "Shade %s returned error status %d", ble_name, response_bytes[4]
-        )
+        LOGGER.warning("Shade %s returned error status %d", ble_name, response_bytes[4])
         return None
     key_data = response_bytes[5:]
     if len(key_data) != 16:
@@ -84,9 +82,7 @@ def _parse_key_response(ble_name: str, result: dict) -> bytes | None:  # noqa: P
     return key_data
 
 
-async def _fetch_key_from_hub(
-    hass: HomeAssistant, hub_url: str
-) -> bytes:
+async def _fetch_key_from_hub(hass: HomeAssistant, hub_url: str) -> bytes:
     """Fetch 16-byte homekey from a PowerView G3 hub.
 
     Tries each shade on the hub until one returns a valid key.
@@ -226,6 +222,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return True
 
         if method == "manual":
+            # Still capture a hub URL if the user provided one — the integration
+            # uses it to fetch shade metadata (friendly names, power_type) even
+            # when the homekey itself was supplied manually.
+            hub_url = user_input.get(CONF_HUB_URL, "").rstrip("/")
+            if hub_url:
+                self._hub_url = hub_url
             return self._validate_manual_key(user_input, errors)
 
         if method != "hub":
@@ -260,9 +262,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # the same network share the same home_id, so HA deduplicates every
         # subsequent shade discovery into this single flow via
         # "already_in_progress" rather than spawning one notification per shade.
-        mfr_data = bytearray(
-            discovery_info.manufacturer_data.get(MFCT_ID, b"")
-        )
+        mfr_data = bytearray(discovery_info.manufacturer_data.get(MFCT_ID, b""))
         if len(mfr_data) >= 2:
             home_id = int.from_bytes(mfr_data[0:2], byteorder="little")
             unique_id = f"pvhome_{home_id}"
@@ -310,4 +310,3 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "hub_url_example": "http://powerview-g3.local",
             },
         )
-

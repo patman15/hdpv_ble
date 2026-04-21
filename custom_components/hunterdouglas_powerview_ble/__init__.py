@@ -4,8 +4,10 @@
 @license: Apache-2.0 license
 """
 
+import asyncio
 import base64
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import aiohttp
 from bleak.backends.device import BLEDevice
@@ -30,8 +32,32 @@ from homeassistant.helpers.dispatcher import (
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .api import UUID_COV_SERVICE as UUID
-from .const import CONF_HUB_URL, LOGGER, MFCT_ID, SIGNAL_NEW_SHADE
+from .const import (
+    CONF_HUB_URL,
+    CONF_POWER_TYPES,
+    LOGGER,
+    MFCT_ID,
+    SIGNAL_NEW_SHADE,
+    PowerType,
+)
 from .coordinator import PVCoordinator
+
+# Hub /home/shades powerType (aiopvapi Gen3: 1=hardwired, 2=battery,
+# 3=rechargeable) → our internal PowerType (matches BLE 0xFFDE byte 0).
+_HUB_POWERTYPE_TO_INTERNAL: dict[int, PowerType] = {
+    1: PowerType.HARDWIRED,
+    2: PowerType.BATTERY,
+    3: PowerType.RECHARGEABLE,
+}
+
+
+@dataclass(frozen=True)
+class ShadeMetadata:
+    """Per-shade metadata sourced from the G3 hub's /home/shades response."""
+
+    friendly_name: str
+    power_type: PowerType | None = None
+
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
@@ -70,10 +96,10 @@ def async_setup_shade_platform(
     )
 
 
-async def _fetch_shade_names(
+async def _fetch_shade_metadata(
     hass: HomeAssistant, hub_url: str
-) -> dict[str, str]:
-    """Fetch BLE name -> friendly name mapping from the hub.
+) -> dict[str, ShadeMetadata]:
+    """Fetch per-shade metadata (friendly name, power_type) from the hub.
 
     Returns empty dict on failure.
     """
@@ -86,7 +112,7 @@ async def _fetch_shade_names(
     except (TimeoutError, aiohttp.ClientError, ValueError):
         return {}
 
-    names: dict[str, str] = {}
+    metadata: dict[str, ShadeMetadata] = {}
     for shade in shades or []:
         ble_name = shade.get("bleName", "")
         if not ble_name:
@@ -96,15 +122,19 @@ async def _fetch_shade_names(
             name = base64.b64decode(name_b64).decode("utf-8") if name_b64 else ble_name
         except Exception:  # noqa: BLE001
             name = ble_name
-        names[ble_name] = name
-    return names
+        raw_pt = shade.get("powerType")
+        power_type = (
+            _HUB_POWERTYPE_TO_INTERNAL.get(raw_pt) if isinstance(raw_pt, int) else None
+        )
+        metadata[ble_name] = ShadeMetadata(friendly_name=name, power_type=power_type)
+    return metadata
 
 
 async def _async_setup_shade(
     hass: HomeAssistant,
     entry: ConfigEntryType,
     service_info: BluetoothServiceInfoBleak,
-    shade_names: dict[str, str],
+    shade_metadata: dict[str, ShadeMetadata],
 ) -> None:
     """Create a coordinator for a newly discovered shade."""
     address = service_info.address
@@ -119,14 +149,41 @@ async def _async_setup_shade(
         LOGGER.debug("BLE device %s not connectable, skipping", address)
         return
 
-    friendly_name = shade_names.get(service_info.name, service_info.name)
+    meta = shade_metadata.get(service_info.name)
+    friendly_name = meta.friendly_name if meta else service_info.name
+    cached_map: dict[str, int] = dict(entry.data.get(CONF_POWER_TYPES, {}))
+    power_type: PowerType | None = meta.power_type if meta else None
+    if power_type is None:
+        cached_value = cached_map.get(address)
+        if isinstance(cached_value, int):
+            try:
+                power_type = PowerType(cached_value)
+            except ValueError:
+                power_type = None
 
     coordinator = PVCoordinator(
-        hass, ble_device, entry.data.copy(), friendly_name
+        hass, ble_device, entry.data.copy(), friendly_name, power_type
     )
 
     entry.runtime_data[address] = coordinator
     entry.async_on_unload(coordinator.async_start())
+
+    # BLE fallback for hub-less (manual-key) setups: one-time query so the
+    # entity platforms (dispatched below) see the resolved value.
+    if coordinator.power_type is None and coordinator.api.has_key:
+        try:
+            await asyncio.wait_for(coordinator.query_power_type(), timeout=10)
+        except (BleakError, TimeoutError):
+            LOGGER.debug("power_type BLE fallback failed for %s", address)
+
+    # Persist any newly-resolved power_type so hub-down restarts keep classification.
+    if coordinator.power_type is not None and cached_map.get(address) != int(
+        coordinator.power_type
+    ):
+        cached_map[address] = int(coordinator.power_type)
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, CONF_POWER_TYPES: cached_map}
+        )
 
     async_dispatcher_send(
         hass,
@@ -151,11 +208,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntryType) -> bool
 
     entry.runtime_data = {}
 
-    # Resolve shade friendly names from hub if available
+    # Resolve shade friendly names and power_type from hub if available
     hub_url = entry.data.get(CONF_HUB_URL, "")
-    shade_names: dict[str, str] = {}
+    shade_metadata: dict[str, ShadeMetadata] = {}
     if hub_url:
-        shade_names = await _fetch_shade_names(hass, hub_url)
+        shade_metadata = await _fetch_shade_metadata(hass, hub_url)
 
     # Forward platforms first so dispatched entities have their setup ready
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -167,7 +224,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntryType) -> bool
             and UUID in service_info.service_uuids
         ):
             hass.async_create_task(
-                _async_setup_shade(hass, entry, service_info, shade_names)
+                _async_setup_shade(hass, entry, service_info, shade_metadata)
             )
 
     # Register for future BLE discoveries
@@ -177,7 +234,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntryType) -> bool
     ) -> None:
         if service_info.address not in entry.runtime_data:
             hass.async_create_task(
-                _async_setup_shade(hass, entry, service_info, shade_names)
+                _async_setup_shade(hass, entry, service_info, shade_metadata)
             )
 
     entry.async_on_unload(

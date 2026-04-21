@@ -32,9 +32,7 @@ def _add_entities(
     coordinator: PVCoordinator, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Create button entities for a single shade coordinator."""
-    async_add_entities(
-        [PowerViewButton(coordinator, descr) for descr in BUTTONS_SHADE]
-    )
+    async_add_entities([PowerViewButton(coordinator, descr) for descr in BUTTONS_SHADE])
 
 
 async def async_setup_entry(

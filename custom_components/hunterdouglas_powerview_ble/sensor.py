@@ -43,10 +43,12 @@ def _add_entities(
     coordinator: PVCoordinator, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Create sensor entities for a single shade coordinator."""
+    include_battery = coordinator.show_battery_entities
     async_add_entities(
         [
             PVSensor(coordinator, descr, format_mac(coordinator.address))
             for descr in SENSOR_TYPES
+            if include_battery or descr.key != ATTR_BATTERY_LEVEL
         ]
     )
 

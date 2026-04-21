@@ -48,9 +48,7 @@ class PowerViewVelocity(
         """Initialize the velocity entity."""
         self._coord = coordinator
         self._attr_device_info = self._coord.device_info
-        self._attr_unique_id = (
-            f"{DOMAIN}_{format_mac(self._coord.address)}_velocity"
-        )
+        self._attr_unique_id = f"{DOMAIN}_{format_mac(self._coord.address)}_velocity"
         super().__init__(coordinator)
 
     @property

@@ -13,7 +13,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
 
 from .api import SHADE_TYPE, PowerViewBLE, ShadeCapability, get_shade_capabilities
-from .const import ATTR_RSSI, CONF_HOME_KEY, DOMAIN, LOGGER
+from .const import ATTR_RSSI, CONF_HOME_KEY, DOMAIN, LOGGER, PowerType
 
 
 class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
@@ -25,6 +25,7 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
         ble_device: BLEDevice,
         data: dict[str, Any],
         friendly_name: str | None = None,
+        power_type: PowerType | None = None,
     ) -> None:
         """Initialize BMS data coordinator."""
         assert ble_device.name is not None
@@ -38,6 +39,7 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
         self._manuf_dat = data.get("manufacturer_data")
         self.dev_details: dict[str, str] = {}
         self.velocity: int = 0
+        self._power_type: PowerType | None = power_type
 
         LOGGER.debug(
             "Initializing coordinator for %s (%s)",
@@ -70,6 +72,25 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
         self.dev_details.update(await self.api.query_dev_info())
 
     @property
+    def power_type(self) -> PowerType | None:
+        """Return the shade's power source, or None if unknown."""
+        return self._power_type
+
+    @property
+    def show_battery_entities(self) -> bool:
+        """Whether battery-related entities should be created for this shade.
+
+        Unknown power_type is treated as battery-ish so real battery data is
+        never silently hidden on unclassified shades.
+        """
+        return self._power_type != PowerType.HARDWIRED
+
+    async def query_power_type(self) -> None:
+        """Query the shade's power_type over BLE and cache the result."""
+        LOGGER.debug("%s: querying power_type", self.name)
+        self._power_type = await self.api.query_power_type()
+
+    @property
     def device_info(self) -> DeviceInfo:
         """Return detailed device information for GUI."""
         LOGGER.debug("%s: device_info, %s", self._friendly_name, self.dev_details)
@@ -87,9 +108,7 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
                 if self.type_id is not None
                 else None
             ),
-            model_id=(
-                str(self.type_id) if self.type_id is not None else None
-            ),
+            model_id=(str(self.type_id) if self.type_id is not None else None),
             serial_number=self.dev_details.get("serial_nr"),
             sw_version=self.dev_details.get("sw_rev"),
             hw_version=self.dev_details.get("hw_rev"),
@@ -98,7 +117,9 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
     @property
     def device_present(self) -> bool:
         """Check if a device is present."""
-        return bluetooth.async_address_present(self.hass, self.address, connectable=True)
+        return bluetooth.async_address_present(
+            self.hass, self.address, connectable=True
+        )
 
     def _async_stop(self) -> None:
         """Shutdown coordinator and any connection."""
