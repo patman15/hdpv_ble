@@ -1,8 +1,11 @@
 """Home Assistant coordinator for Hunter Douglas PowerView (BLE) integration."""
 
-from typing import Any
+import asyncio
+import time
+from typing import Any, Final
 
 from bleak.backends.device import BLEDevice
+from bleak.exc import BleakError
 
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth.const import DOMAIN as BLUETOOTH_DOMAIN
@@ -10,6 +13,7 @@ from homeassistant.components.bluetooth.passive_update_coordinator import (
     PassiveBluetoothDataUpdateCoordinator,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
 
 from .api import SHADE_TYPE, PowerViewBLE, ShadeCapability, get_shade_capabilities
@@ -18,6 +22,11 @@ from .const import ATTR_RSSI, CONF_HOME_KEY, DOMAIN, LOGGER, PowerType
 
 class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
     """Update coordinator for a battery management system."""
+
+    # Firmware isn't in the advert — pull it via GATT. Retry every minute
+    # while empty, then re-check daily so firmware upgrades eventually surface.
+    _DEV_INFO_REFRESH_S: Final[float] = 24 * 3600
+    _DEV_INFO_RETRY_S: Final[float] = 60
 
     def __init__(
         self,
@@ -40,6 +49,8 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
         self.dev_details: dict[str, str] = {}
         self.velocity: int = 0
         self._power_type: PowerType | None = power_type
+        self._last_dev_info_at: float = 0.0
+        self._dev_info_task: asyncio.Task[None] | None = None
 
         LOGGER.debug(
             "Initializing coordinator for %s (%s)",
@@ -67,9 +78,50 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
         return get_shade_capabilities(self.type_id)
 
     async def query_dev_info(self) -> None:
-        """Receive detailed information from device."""
+        """Fetch device info over GATT and push into the device registry.
+
+        The HA device registry does not re-read DeviceInfo when the underlying
+        data changes, so we update it explicitly when new details arrive.
+        """
         LOGGER.debug("%s: querying device info", self.name)
-        self.dev_details.update(await self.api.query_dev_info())
+        self._last_dev_info_at = time.monotonic()
+        new = await self.api.query_dev_info()
+        if new and new != self.dev_details:
+            self.dev_details.update(new)
+            self._push_device_registry_update()
+
+    def _push_device_registry_update(self) -> None:
+        reg = dr.async_get(self.hass)
+        device = reg.async_get_device(identifiers={(DOMAIN, self.address)})
+        if device is None:
+            return
+        reg.async_update_device(
+            device.id,
+            sw_version=self.dev_details.get("sw_rev"),
+            hw_version=self.dev_details.get("hw_rev"),
+            serial_number=self.dev_details.get("serial_nr"),
+        )
+
+    async def _refresh_dev_info_safe(self) -> None:
+        try:
+            await self.query_dev_info()
+        except (BleakError, TimeoutError) as ex:
+            LOGGER.debug("%s: dev_info refresh failed: %s", self.name, ex)
+
+    def _maybe_refresh_dev_info(self) -> None:
+        """Schedule a background dev_info refresh if stale."""
+        if self._dev_info_task is not None and not self._dev_info_task.done():
+            return
+        interval = (
+            self._DEV_INFO_REFRESH_S
+            if self.dev_details.get("sw_rev")
+            else self._DEV_INFO_RETRY_S
+        )
+        if time.monotonic() - self._last_dev_info_at < interval:
+            return
+        self._dev_info_task = self.hass.async_create_background_task(
+            self._refresh_dev_info_safe(), name=f"pvble_dev_info_{self.address}"
+        )
 
     @property
     def power_type(self) -> PowerType | None:
@@ -124,6 +176,8 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
     def _async_stop(self) -> None:
         """Shutdown coordinator and any connection."""
         LOGGER.debug("%s: shutting down BMS device", self.name)
+        if self._dev_info_task is not None and not self._dev_info_task.done():
+            self._dev_info_task.cancel()
         self.hass.async_create_task(self.api.disconnect())
         super()._async_stop()
 
@@ -145,6 +199,7 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
                 )
             )
             self.api.encrypted = bool(new_data.get("home_id"))
+            self._maybe_refresh_dev_info()
 
         if new_data == self.data:
             return

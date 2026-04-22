@@ -185,21 +185,23 @@ async def _async_setup_shade(
             entry, data={**entry.data, CONF_POWER_TYPES: cached_map}
         )
 
+    # Populate dev_details before entity dispatch so the device registers with
+    # firmware/serial on first creation — the HA registry doesn't re-read
+    # DeviceInfo later. Failures are retried from the advertisement handler.
+    try:
+        await coordinator.query_dev_info()
+    except (BleakError, TimeoutError):
+        LOGGER.debug(
+            "Initial device info query failed for %s (%s); will retry via adverts",
+            friendly_name,
+            address,
+        )
+
     async_dispatcher_send(
         hass,
         SIGNAL_NEW_SHADE.format(entry_id=entry.entry_id),
         coordinator,
     )
-
-    # Query device info in background — don't block entry setup
-    try:
-        await coordinator.query_dev_info()
-    except BleakError:
-        LOGGER.warning(
-            "Could not query device info for %s (%s)",
-            friendly_name,
-            address,
-        )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntryType) -> bool:
