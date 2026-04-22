@@ -5,15 +5,15 @@ to the Home Assistant integration code. Fetches the shade's homekey
 from a G3 Gateway, scans for the BLE advertisement, then dumps:
   1. BLE advertisement (raw + decoded)
   2. Standard GATT device-info characteristics
-  3. Read-only PowerView queries:
-       - 0xF1DD product info
-       - 0xFFDD HW diagnostics (contains serial / firmware / type / model)
-       - 0xFFDE power status (battery vs. hardwired)
+  3. Decoded read-only PowerView queries:
+       - 0xFFDD sel=4 product info        (firm update count, sw_rev)
+       - 0xFFDD sel=5 extended product info (serial, fw/sw/hw_rev, type)
+       - 0xFFDE power status              (hardwired vs battery, level)
 
 Dependencies:  bleak, bleak-retry-connector, cryptography, requests  (no HA)
 
-SAFETY: only the three read-only opcodes above are ever sent. No
-set/move/scene/rekey/factory-reset opcodes are implemented here.
+SAFETY: only the read-only opcodes above are ever sent. No set/move/
+scene/rekey/factory-reset opcodes are implemented here.
 
 Usage:
     python scripts/shade_report.py --ble-name PV-XXXXXX
@@ -70,17 +70,21 @@ GATT_DEV_INFO: list[tuple[str, str]] = [
 # (e.g. 0x01F7 move, 0xFA5A set-scene, 0xFB02 rekey, 0xFFDF set-power-
 # type, 0xFFEE factory-reset).
 #
-# Observed (fw_rev=22, Duette type 6, hardwired):
-#   0xF1DD → 1-byte `04` payload on len=0 input; 2-byte `8c 00` on len=1;
-#            `04` again for len=2/4/8.  The `8c 00` response is IDENTICAL
-#            to what 0xFFDD returns at len=1, so it's a shared reject
-#            path, not real data.  Conclusion: F1DD is either disabled or
-#            gated on specific non-zero parameter bytes we haven't found.
-#            Standard GATT chars (2a24-2a29) already give us the product
-#            info this opcode would have returned.
-#   0xFFDD → same signature as F1DD: `04` at len∈{0,2,4,8}, `8c 00` at
-#            len=1.  Same conclusion — superseded by GATT 180A service
-#            (manufacturer/model/serial/hw_rev/fw_rev/sw_rev).
+# Decoded queries (fw_rev=22, Duette type 6, hardwired):
+#   0xFFDD → product-info opcode gated on a 1-byte selector.  sel=4
+#            returns a 14-byte page (firm update count u32 LE at bytes
+#            2-5, firm current version u16 LE at bytes 6-7 matching
+#            GATT sw_rev).  sel=5 returns a 28-byte extended page with
+#            every field confirmed against GATT Device Information:
+#            serial (bytes 2-9, little-endian), fw_rev (10-11), sw_rev
+#            (14-15), hw_rev (18-21 u32 LE), build/mfg id (22-25), and
+#            type_id (26) matching the advertisement.  Decoded in
+#            annotate_query.  0xF1DD returns the same sel=4 page and
+#            a truncated 22-byte sel=5 (no trailing 6 bytes); not
+#            queried separately since its data is a strict subset.
+#            The emulator's ret_valFFDD (29 B, labelled "HW
+#            diagnostics") is actually this extended product info with
+#            dummy data, off-by-one vs real firmware.
 #   0xFFDE → 8-byte payload.  Byte-by-byte findings on hardwired Duette
 #            (type 6, fw_rev=22), verified across four shades and ~10
 #            targeted motion/idle experiments on one unit:
@@ -125,10 +129,16 @@ GATT_DEV_INFO: list[tuple[str, str]] = [
 #            0xFFDE remains the only reliable source for battery-vs-
 #            hardwired detection (the advert's 2-bit level field caps
 #            at 3 = "100% OR hardwired" and cannot disambiguate).
-GET_QUERIES: list[tuple[int, str]] = [
-    (0xF1DD, "product info"),
-    (0xFFDD, "HW diagnostics"),
-    (0xFFDE, "power status"),
+# (cmd, payload, label) — each entry is a query that returns real
+# decoded data on fw_rev=22.  0xFFDD's two selectors are complementary:
+# sel=4 carries firm update count + firm current version; sel=5 carries
+# serial / fw_rev / sw_rev / hw_rev / build id / type_id.  0xF1DD is a
+# strict subset of 0xFFDD (same sel=4 bytes; sel=5 drops the trailing 6)
+# so it's not queried separately.
+GET_QUERIES: list[tuple[int, bytes, str]] = [
+    (0xFFDD, b"\x04", "product info (sel=4)"),
+    (0xFFDD, b"\x05", "ext product info (sel=5)"),
+    (0xFFDE, b"", "power status"),
 ]
 
 # Advert level field is 2 bits, so only values 0-3 are observable on the wire.
@@ -141,15 +151,6 @@ PV_ERROR_CODES: dict[int, str] = {
     0x04: "invalid length (hypothesis)",
 }
 
-# Observed two-byte error signatures.  fw_rev=22 returns `8c 00` for both
-# 0xF1DD and 0xFFDD with a 1-byte input — identical bytes across two
-# semantically different opcodes, so this is a shared reject path rather
-# than opcode-specific data.  Suspected meaning: "unsupported / bad
-# parameter", but not confirmed.
-PV_ERROR_SIGNATURES_2B: dict[bytes, str] = {
-    b"\x8c\x00": "generic reject (hypothesis; fw_rev=22, F1DD+FFDD)",
-}
-
 # 0xFFDE byte 0 — power type.  0 is confirmed hardwired on fw_rev=22.
 # 1/2 are hypotheses pending sample data from battery/rechargeable shades.
 POWER_TYPE_LABELS: dict[int, str] = {
@@ -158,12 +159,18 @@ POWER_TYPE_LABELS: dict[int, str] = {
     2: "rechargeable (hypothesis)",
 }
 
-# Emulator-confirmed success-response lengths (see emu/PV_BLE_cover.ino).
-# Used to flag a real shade's 1-byte reply as "way shorter than expected".
-EXPECTED_QUERY_LEN: dict[int, int] = {
-    0xF1DD: 14,
-    0xFFDD: 29,
-    0xFFDE: 8,
+# Known-good response lengths per opcode.  Used only by annotate_query
+# to decide whether a 1-byte reply should be interpreted as an error
+# code (i.e. "we expected a longer payload and got a single byte — that
+# byte is the error").  0xFFDD has two valid shapes because its two
+# queried selectors return different lengths; 0xF1DD's 14- and 22-byte
+# shapes are retained for completeness even though the script no longer
+# queries that opcode directly.  Emulator's 0xFFDD dummy is 29 B but
+# real fw_rev=22 returns 28 B at sel=5 — treat emulator as off-by-one.
+EXPECTED_QUERY_LEN: dict[int, set[int]] = {
+    0xF1DD: {14, 22},
+    0xFFDD: {14, 28},
+    0xFFDE: {8},
 }
 
 SCAN_TIMEOUT = 30.0
@@ -322,16 +329,100 @@ def annotate_query(cmd: int, payload: bytes) -> str | None:
     marked "hypothesis" still needs cross-shade confirmation — that's
     the whole point of this report.
     """
-    expected = EXPECTED_QUERY_LEN.get(cmd)
+    expected = EXPECTED_QUERY_LEN.get(cmd, set())
     # Shade returned a 1-byte reply where we know a longer one is valid:
     # standard PowerView error-response shape — byte is an error code.
-    if expected and len(payload) == 1 and expected > 1:
+    if expected and len(payload) == 1 and 1 not in expected:
         err = payload[0]
         note = PV_ERROR_CODES.get(err, "unknown error code")
+        good = ", ".join(str(n) for n in sorted(expected))
         return (
             f"likely error code 0x{err:02X} ({note}); "
-            f"emulator returns {expected} B on success"
+            f"known good lengths: {good} B"
         )
+    # Two-byte `8c XX` rejection: byte 0 is a fixed reject code, byte 1
+    # echoes the bad input byte (observed for selector=0 and selector=3
+    # on fw_rev=22, where the selector is the first byte of the query
+    # payload).  Decoding this helps distinguish "bad selector" from
+    # other short error shapes.
+    if len(payload) == 2 and payload[0] == 0x8C:
+        return (
+            f"rejection (0x8C) — selector 0x{payload[1]:02X} "
+            f"({payload[1]}) not supported by this opcode"
+        )
+    # 14-byte product-info page, returned by 0xF1DD and 0xFFDD when the
+    # payload's first byte is 0x04.  The two opcodes return the same
+    # bytes here (sel=5 is where they diverge — see below).  Confirmed
+    # on fw_rev=22: byte 1 echoes the selector (0x04), bytes 2-5 are a
+    # u32 counter (=1 on a freshly-imaged shade), and bytes 6-7 LE are
+    # the firmware version (matches GATT sw_rev exactly — the emulator
+    # also embeds SW_VERSION there in its ret_valF1DD dummy).  Bytes
+    # 8-13 are zero on our samples; meaning unknown.
+    if cmd in (0xF1DD, 0xFFDD) and len(payload) == 14 and payload[1] == 0x04:
+        counter = int.from_bytes(payload[2:6], "little")
+        firm_current = int.from_bytes(payload[6:8], "little")
+        indent = "           "
+        return (
+            "14-byte product info (selector=0x04). Fields:\n"
+            f"{indent}byte 1 = 0x{payload[1]:02X} → echoed selector\n"
+            f"{indent}bytes 2-5 = {payload[2:6].hex(' ')} → "
+            f"counter={counter} (u32 LE; hypothesis — firm update count?)\n"
+            f"{indent}bytes 6-7 = {payload[6:8].hex(' ')} → firm current "
+            f"version={firm_current} (confirmed; matches GATT sw_rev)\n"
+            f"{indent}bytes 8-13 = {payload[8:14].hex(' ')} → unknown "
+            f"(zero on all samples)"
+        )
+    # Extended product info (selector=0x05).  0xF1DD returns a 22-byte
+    # subset; 0xFFDD returns 28 bytes (same first 22 plus 4-byte build/
+    # mfg counter + type_id + model byte).  Every field below is
+    # confirmed against GATT Device Information on fw_rev=22:
+    #   bytes 2-9   = 8-byte serial LE (matches GATT 0x2a25 hex-reversed)
+    #   bytes 10-11 = u16 LE fw_rev   (matches GATT 0x2a26)
+    #   bytes 14-15 = u16 LE sw_rev   (matches GATT 0x2a28)
+    #   bytes 18-21 = u32 LE hw_rev   (matches GATT 0x2a27)
+    # The FFDD-only tail is still provisional — byte 26 matches the
+    # advert's type_id; bytes 22-25 look like another 32-bit identifier
+    # (1015780 on the "Study" shade), and byte 27 is a model/family byte.
+    if (
+        cmd in (0xF1DD, 0xFFDD)
+        and len(payload) in (22, 28)
+        and payload[1] == 0x05
+    ):
+        serial_hex = payload[2:10][::-1].hex().upper()
+        fw_rev = int.from_bytes(payload[10:12], "little")
+        sw_rev = int.from_bytes(payload[14:16], "little")
+        hw_rev = int.from_bytes(payload[18:22], "little")
+        indent = "           "
+        lines = [
+            f"{len(payload)}-byte extended product info (selector=0x05). "
+            "Fields (all confirmed vs GATT):",
+            f"{indent}byte 1 = 0x{payload[1]:02X} → echoed selector",
+            f"{indent}bytes 2-9 = {payload[2:10].hex(' ')} → "
+            f"serial={serial_hex} (LE; matches GATT 0x2a25)",
+            f"{indent}bytes 10-11 = {payload[10:12].hex(' ')} → "
+            f"fw_rev={fw_rev} (matches GATT 0x2a26)",
+            f"{indent}bytes 12-13 = {payload[12:14].hex(' ')} → "
+            "reserved (zero on samples)",
+            f"{indent}bytes 14-15 = {payload[14:16].hex(' ')} → "
+            f"sw_rev={sw_rev} (matches GATT 0x2a28)",
+            f"{indent}bytes 16-17 = {payload[16:18].hex(' ')} → "
+            "reserved (zero on samples)",
+            f"{indent}bytes 18-21 = {payload[18:22].hex(' ')} → "
+            f"hw_rev={hw_rev} (matches GATT 0x2a27)",
+        ]
+        if len(payload) == 28:
+            build_id = int.from_bytes(payload[22:26], "little")
+            lines.extend(
+                [
+                    f"{indent}bytes 22-25 = {payload[22:26].hex(' ')} → "
+                    f"build/mfg id={build_id} (u32 LE; hypothesis)",
+                    f"{indent}byte 26 = 0x{payload[26]:02X} → "
+                    f"type_id={payload[26]} (matches advert)",
+                    f"{indent}byte 27 = 0x{payload[27]:02X} → "
+                    "model/family byte (hypothesis)",
+                ]
+            )
+        return "\n".join(lines)
     if cmd == 0xFFDE and len(payload) == 8:
         pt = payload[0]
         label = POWER_TYPE_LABELS.get(pt, f"unknown ({pt})")
@@ -360,52 +451,6 @@ def annotate_query(cmd: int, payload: bytes) -> str | None:
             f"{indent}byte 7 = 0x{payload[7]:02X} → reserved/padding"
         )
     return None
-
-
-# Payload lengths to try when --probe is set.  Small, zero-filled inputs
-# only — we are varying length to see which values the firmware accepts,
-# not guessing parameter content.  Kept short because longer sweeps take
-# longer to run and each probe is an encrypted BLE round-trip.
-PROBE_LENGTHS: list[int] = [0, 1, 2, 4, 8]
-
-# Opcodes we'll probe.  MUST only contain documented read-only GETs;
-# never add a SET/move/scene/rekey/reset opcode here (see SAFETY note in
-# the module docstring).
-PROBE_OPCODES: list[tuple[int, str]] = [
-    (0xF1DD, "product info"),
-    (0xFFDD, "HW diagnostics"),
-]
-
-
-async def probe_opcode(api: PowerViewClient, cmd: int, label: str) -> None:
-    """Sweep zero-filled input payloads across PROBE_LENGTHS.
-
-    Tag policy: `HIT` only when the response length matches what the
-    emulator returns on success (EXPECTED_QUERY_LEN).  Anything shorter
-    is flagged `short?`; shorter-than-3 is almost certainly an error
-    shape — fw_rev=22 has been observed returning both 1-byte (`04`)
-    and 2-byte (`8c 00`) rejections, the latter being the *same* for
-    different opcodes, so a short payload is not proof of a real hit.
-    """
-    expected = EXPECTED_QUERY_LEN.get(cmd, 0)
-    print(f"  0x{cmd:04X} {label} (expect {expected} B on success):")
-    for n in PROBE_LENGTHS:
-        data = bytes(n)
-        try:
-            payload = await api.query(cmd, data)
-            if expected and len(payload) == expected:
-                tag = "HIT   "
-            elif len(payload) < 3:
-                tag = "error?"
-            else:
-                tag = "short?"
-            hex_display = payload.hex(" ") if payload else "(empty)"
-            print(
-                f"    len={n:2} → "
-                f"{tag} ({len(payload):2} B): {hex_display}"
-            )
-        except Exception as ex:  # noqa: BLE001
-            print(f"    len={n:2} → FAILED — {ex}")
 
 
 def _print_advertisement(device: BLEDevice, adv: AdvertisementData) -> None:
@@ -446,28 +491,18 @@ async def _print_gatt_info(api: PowerViewClient) -> None:
 
 async def _print_queries(api: PowerViewClient) -> None:
     """Print section 3: read-only protocol queries."""
-    for cmd, label in GET_QUERIES:
+    for cmd, req, label in GET_QUERIES:
         try:
-            payload = await api.query(cmd)
+            resp = await api.query(cmd, req)
             print(
-                f"  0x{cmd:04X} {label:16} "
-                f"({len(payload):2} B): {payload.hex(' ')}"
+                f"  0x{cmd:04X} {label:25} "
+                f"({len(resp):2} B): {resp.hex(' ')}"
             )
-            note = annotate_query(cmd, payload)
+            note = annotate_query(cmd, resp)
             if note:
                 print(f"         → {note}")
         except Exception as ex:  # noqa: BLE001
-            print(f"  0x{cmd:04X} {label:16} FAILED — {ex}")
-            break
-
-
-async def _print_probe(api: PowerViewClient) -> None:
-    """Print section 4: payload-length sweep over read-only probe opcodes."""
-    for cmd, label in PROBE_OPCODES:
-        try:
-            await probe_opcode(api, cmd, label)
-        except Exception as ex:  # noqa: BLE001
-            print(f"  0x{cmd:04X} probe aborted — {ex}")
+            print(f"  0x{cmd:04X} {label:25} FAILED — {ex}")
             break
 
 
@@ -477,7 +512,6 @@ async def report_shade(
     home_key: bytes,
     device: BLEDevice | None,
     adv: AdvertisementData | None,
-    probe: bool = False,
 ) -> None:
     """Print the full report for a single shade: advertisement + GATT + queries."""
     print(f"\n=== '{friendly_name}'  (BLE: {ble_name}) ===")
@@ -495,10 +529,6 @@ async def report_shade(
         _section("3. Protocol queries (read-only)")
         await _print_queries(api)
 
-        if probe:
-            _section("4. Probe (payload-length sweep, read-only opcodes)")
-            await _print_probe(api)
-
 
 # --- Main ----------------------------------------------------------
 PER_SHADE_TIMEOUT = 45.0  # hard cap on total time spent per shade's report
@@ -510,7 +540,6 @@ async def run(
     all_shades: bool,
     scan_timeout: float,
     verbose: bool,
-    probe: bool = False,
 ) -> int:
     """Fetch the shade list, homekey, then report on each target."""
     if verbose:
@@ -569,7 +598,7 @@ async def run(
         # Per-shade timeout so one unreachable shade can't stall the whole run.
         try:
             await asyncio.wait_for(
-                report_shade(friendly, ble, home_key, dev, adv, probe=probe),
+                report_shade(friendly, ble, home_key, dev, adv),
                 timeout=PER_SHADE_TIMEOUT,
             )
         except TimeoutError:
@@ -599,15 +628,6 @@ def main() -> int:
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable debug logging"
     )
-    parser.add_argument(
-        "--probe",
-        action="store_true",
-        help=(
-            "Sweep payload lengths for 0xF1DD/0xFFDD to find what the "
-            "firmware accepts.  Read-only; slow (one BLE round-trip per "
-            "length).  Share the output to help decode these opcodes."
-        ),
-    )
     args = parser.parse_args()
 
     targets: list[tuple[str, str]] | None = None
@@ -620,7 +640,6 @@ def main() -> int:
             args.all,
             args.scan_timeout,
             args.verbose,
-            probe=args.probe,
         )
     )
 
