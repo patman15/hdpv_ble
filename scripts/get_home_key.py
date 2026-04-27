@@ -16,6 +16,7 @@ which works for any home on the account whether the gateway is reachable or not.
 
 import base64
 import getpass
+import hashlib
 from typing import Any, Final
 import urllib.parse
 
@@ -27,23 +28,56 @@ FIREBASE_PROJECT: Final[str] = "powerblue-861ad"
 NO_KEY_SENTINEL: Final[str] = "00112233445566778899AABBCCDDEEFF"
 TIMEOUT: Final[int] = 20
 
+# Identity values matching what the Android PowerView 3.8.1 'hd' release sends.
+# Faking these makes us look like a normal app instance to Hunter Douglas;
+# inventing 'python-client' style values would stand out in any server-side
+# log/filter. See BuildConfig.java, BrandConfig.getAppBrandName(),
+# PowerViewApplication.getUserAgentString(), SignInViewModel.doSignIn().
+APP_VERSION: Final[str] = "3.8.1"
+APP_BUILD: Final[str] = "7911"
+APP_BRAND: Final[str] = "HD"  # BrandConfig flavor 'hd' -> "HD"
+DEVICE_NAME: Final[str] = "Google Pixel 8"  # Build.MANUFACTURER + " " + Build.MODEL
+LANGUAGE: Final[str] = "en"  # Locale.getDefault().getLanguage()
+REGION: Final[str] = "US"  # Locale.getDefault().getCountry()
+LOCALE: Final[str] = f"{LANGUAGE}_{REGION}"  # Locale.getDefault().toString()
+USER_AGENT: Final[str] = f"PowerView/{APP_VERSION} {APP_BUILD} ({DEVICE_NAME} {LOCALE})"
 
-def sign_in(email: str, password: str) -> str:
+
+def device_app_id(email: str) -> str:
+    """Derive a stable, ANDROID_ID-shaped deviceAppId from the account email.
+
+    The app builds this as `Settings.Secure.ANDROID_ID + "hdrelease"`, capped
+    at 64 chars (BrandConfig.appDeviceId). ANDROID_ID is a 16-hex-char string.
+    Hashing the email gives a value that's stable across runs for this account
+    so we don't look like a brand new device on every login.
+    """
+    android_id: str = hashlib.sha256(email.encode()).hexdigest()[:16]
+    return f"{android_id}hdrelease"
+
+
+def make_session() -> requests.Session:
+    """Build a requests.Session with the User-Agent the Android app sends."""
+    session: requests.Session = requests.Session()
+    session.headers["User-Agent"] = USER_AGENT
+    return session
+
+
+def sign_in(session: requests.Session, email: str, password: str) -> str:
     """Sign in to the PowerView account API and return the pvkey token."""
     body: Final[dict[str, dict[str, str]]] = {
         "user": {
             "email": email,
             "password": password,
-            "deviceAppBrand": "PowerView",
-            "deviceAppId": "python-client",
-            "deviceAppVersion": "3.8.1",
-            "deviceName": "python",
-            "deviceType": "python",
-            "language": "en",
-            "region": "US",
+            "deviceAppBrand": APP_BRAND,
+            "deviceAppId": device_app_id(email),
+            "deviceAppVersion": APP_VERSION,
+            "deviceName": DEVICE_NAME,
+            "deviceType": DEVICE_NAME,
+            "language": LANGUAGE,
+            "region": REGION,
         }
     }
-    resp: requests.Response = requests.post(
+    resp: requests.Response = session.post(
         f"{RC_API}/api/v5/users/rcUserSignIn", json=body, timeout=TIMEOUT
     )
     resp.raise_for_status()
@@ -60,9 +94,9 @@ def basic_auth_header(email: str, pvkey: str) -> dict[str, str]:
     return {"Authorization": f"Basic {token}"}
 
 
-def list_homes(auth: dict[str, str]) -> list[dict[str, Any]]:
+def list_homes(session: requests.Session, auth: dict[str, str]) -> list[dict[str, Any]]:
     """Return the list of homes (RHome objects) on this account."""
-    resp: requests.Response = requests.get(
+    resp: requests.Response = session.get(
         f"{RC_API}/api/v5/homes", headers=auth, timeout=TIMEOUT
     )
     resp.raise_for_status()
@@ -71,9 +105,9 @@ def list_homes(auth: dict[str, str]) -> list[dict[str, Any]]:
     return homes
 
 
-def firebase_custom_token(auth: dict[str, str]) -> str:
+def firebase_custom_token(session: requests.Session, auth: dict[str, str]) -> str:
     """Trade the pvkey for a single-use Firebase custom token."""
-    resp: requests.Response = requests.get(
+    resp: requests.Response = session.get(
         f"{RC_API}/api/v5/firebaseAuth/userToken", headers=auth, timeout=TIMEOUT
     )
     resp.raise_for_status()
@@ -142,18 +176,19 @@ def home_display_name(home: dict[str, Any]) -> str:
 def main(email: str, password: str | None) -> int:
     """Sign in, then print the homekey for every home on the account."""
     pwd: Final[str] = password or getpass.getpass(f"Password for {email}: ")
+    session: Final[requests.Session] = make_session()
 
     print("Signing in...")
-    pvkey: Final[str] = sign_in(email, pwd)
+    pvkey: Final[str] = sign_in(session, email, pwd)
     auth: Final[dict[str, str]] = basic_auth_header(email, pvkey)
 
-    homes: Final[list[dict[str, Any]]] = list_homes(auth)
+    homes: Final[list[dict[str, Any]]] = list_homes(session, auth)
     if not homes:
         print("No homes are associated with this account.")
         return 1
 
     print("Authenticating to Firebase...")
-    id_token: Final[str] = firebase_id_token(firebase_custom_token(auth))
+    id_token: Final[str] = firebase_id_token(firebase_custom_token(session, auth))
 
     print(f"Found {len(homes)} home(s), interrogating")
     for home in homes:
