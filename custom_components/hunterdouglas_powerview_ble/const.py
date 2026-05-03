@@ -12,6 +12,7 @@ TIMEOUT: Final[int] = 5
 CONF_HOME_KEY: Final[str] = "home_key"
 CONF_HUB_URL: Final[str] = "hub_url"
 CONF_POWER_TYPES: Final[str] = "power_types"
+CONF_FRIENDLY_NAMES: Final[str] = "friendly_names"
 
 
 class PowerType(IntEnum):

@@ -24,6 +24,7 @@ from homeassistant.components.bluetooth import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import (
     async_dispatcher_connect,
@@ -33,8 +34,10 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .api import UUID_COV_SERVICE as UUID
 from .const import (
+    CONF_FRIENDLY_NAMES,
     CONF_HUB_URL,
     CONF_POWER_TYPES,
+    DOMAIN,
     LOGGER,
     MFCT_ID,
     SIGNAL_NEW_SHADE,
@@ -130,6 +133,50 @@ async def _fetch_shade_metadata(
     return metadata
 
 
+def _persist_cache_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntryType,
+    key: str,
+    address: str,
+    value: object,
+) -> None:
+    """Read-modify-write a per-address value into a cache stored on entry.data.
+
+    HA replaces entry.data atomically, so concurrent setup tasks each pull
+    the latest snapshot before merging — the no-op guard prevents writes
+    that would just notify listeners with unchanged data.
+    """
+    cache = dict(entry.data.get(key, {}))
+    if cache.get(address) == value:
+        return
+    cache[address] = value
+    hass.config_entries.async_update_entry(entry, data={**entry.data, key: cache})
+
+
+def _resolve_friendly_name(
+    hass: HomeAssistant,
+    entry: ConfigEntryType,
+    service_info: BluetoothServiceInfoBleak,
+    meta: ShadeMetadata | None,
+) -> str:
+    """Resolve a shade's friendly name (Shelly-style) and refresh the cache.
+
+    Hub data wins; otherwise fall back to the cached value from a prior
+    successful resolution; otherwise fall back to the BLE advert name.
+    """
+    address = service_info.address
+    cached_names: dict[str, str] = entry.data.get(CONF_FRIENDLY_NAMES, {})
+    if meta is not None:
+        friendly_name = meta.friendly_name
+    elif address in cached_names:
+        friendly_name = cached_names[address]
+    else:
+        friendly_name = service_info.name or address
+
+    _persist_cache_entry(hass, entry, CONF_FRIENDLY_NAMES, address, friendly_name)
+    return friendly_name
+
+
 async def _async_setup_shade(
     hass: HomeAssistant,
     entry: ConfigEntryType,
@@ -150,11 +197,11 @@ async def _async_setup_shade(
         return
 
     meta = shade_metadata.get(service_info.name)
-    friendly_name = meta.friendly_name if meta else service_info.name
-    cached_map: dict[str, int] = dict(entry.data.get(CONF_POWER_TYPES, {}))
+    friendly_name = _resolve_friendly_name(hass, entry, service_info, meta)
+
     power_type: PowerType | None = meta.power_type if meta else None
     if power_type is None:
-        cached_value = cached_map.get(address)
+        cached_value = entry.data.get(CONF_POWER_TYPES, {}).get(address)
         if isinstance(cached_value, int):
             try:
                 power_type = PowerType(cached_value)
@@ -177,12 +224,9 @@ async def _async_setup_shade(
             LOGGER.debug("power_type BLE fallback failed for %s", address)
 
     # Persist any newly-resolved power_type so hub-down restarts keep classification.
-    if coordinator.power_type is not None and cached_map.get(address) != int(
-        coordinator.power_type
-    ):
-        cached_map[address] = int(coordinator.power_type)
-        hass.config_entries.async_update_entry(
-            entry, data={**entry.data, CONF_POWER_TYPES: cached_map}
+    if coordinator.power_type is not None:
+        _persist_cache_entry(
+            hass, entry, CONF_POWER_TYPES, address, int(coordinator.power_type)
         )
 
     # Populate dev_details before entity dispatch so the device registers with
@@ -250,6 +294,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntryType) -> bool
             BluetoothScanningMode.ACTIVE,
         )
     )
+
+    return True
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant,
+    entry: ConfigEntryType,
+    device_entry: dr.DeviceEntry,
+) -> bool:
+    """Allow user-driven device removal; purge cached state for that address."""
+    addresses = {ident[1] for ident in device_entry.identifiers if ident[0] == DOMAIN}
+    if not addresses:
+        return True
+
+    new_data = dict(entry.data)
+    for key in (CONF_FRIENDLY_NAMES, CONF_POWER_TYPES):
+        cache = dict(new_data.get(key, {}))
+        for addr in addresses:
+            cache.pop(addr, None)
+        new_data[key] = cache
+    hass.config_entries.async_update_entry(entry, data=new_data)
+
+    for addr in addresses:
+        coord = entry.runtime_data.pop(addr, None)
+        if coord is not None:
+            # _async_stop is a parent-class (DataUpdateCoordinator) convention;
+            # entry.async_on_unload only fires on full entry unload, so we
+            # invoke it directly here for per-device removal.
+            coord._async_stop()  # noqa: SLF001
 
     return True
 
