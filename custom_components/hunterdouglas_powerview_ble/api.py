@@ -297,8 +297,8 @@ class PowerViewBLE:
             "is_closing": bool(flags == 0x1),
             "battery_charging": bool(flags == 0x3),  # observed
             "battery_level": POWER_LEVELS[(data[8] >> 6)],
-            "resetMode": bool(data[8] & 0x1),
-            "resetClock": bool(data[8] & 0x2),
+            "reset_mode": bool(data[8] & 0x1),
+            "reset_clock": bool(data[8] & 0x2),
         }
 
     # position cmd: uint16_t pos1, uint16_t pos2, uint16_t pos3, uint16_t tilt, uint8_t velocity

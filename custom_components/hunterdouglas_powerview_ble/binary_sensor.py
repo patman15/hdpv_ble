@@ -8,7 +8,7 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.components.bluetooth.passive_update_coordinator import (
     PassiveBluetoothCoordinatorEntity,
 )
-from homeassistant.const import ATTR_BATTERY_CHARGING
+from homeassistant.const import ATTR_BATTERY_CHARGING, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -22,7 +22,24 @@ BINARY_SENSOR_TYPES: list[BinarySensorEntityDescription] = [
         key=ATTR_BATTERY_CHARGING,
         translation_key=ATTR_BATTERY_CHARGING,
         device_class=BinarySensorDeviceClass.BATTERY_CHARGING,
-    )
+    ),
+    # Diagnostic flags from byte 8 of the BLE advertisement. They surface when
+    # a battery wand has been removed (charging) and the shade has lost its
+    # RTC / scheduling state — see the "shade unresponsive after charging"
+    # known issue. Disabled by default to keep the device page clean for
+    # users who aren't debugging this scenario.
+    BinarySensorEntityDescription(
+        key="reset_clock",
+        translation_key="reset_clock",
+        entity_registry_enabled_default=False,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    BinarySensorEntityDescription(
+        key="reset_mode",
+        translation_key="reset_mode",
+        entity_registry_enabled_default=False,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
 ]
 
 
@@ -30,13 +47,11 @@ def _add_entities(
     coordinator: PVCoordinator, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Create binary sensor entities for a single shade coordinator."""
-    include_battery = coordinator.show_battery_entities
+    if not coordinator.show_battery_entities:
+        return
+    mac = format_mac(coordinator.address)
     async_add_entities(
-        [
-            PVBinarySensor(coordinator, descr, format_mac(coordinator.address))
-            for descr in BINARY_SENSOR_TYPES
-            if include_battery or descr.key != ATTR_BATTERY_CHARGING
-        ]
+        PVBinarySensor(coordinator, descr, mac) for descr in BINARY_SENSOR_TYPES
     )
 
 
