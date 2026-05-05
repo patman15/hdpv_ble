@@ -40,7 +40,9 @@ SHADE_TYPE: Final[dict[int, str]] = {
     6: "Duette",
     10: "Duette and Applause SkyLift",
     19: "Provenance Woven Wood",
-    26: "Vertical",
+    26: "Skyline Panel, Left Stack",
+    27: "Skyline Panel, Right Stack",
+    28: "Skyline Panel, Split Stack",
     31: "Vignette",
     32: "Vignette",
     42: "M25T Roller Blind",
@@ -48,6 +50,9 @@ SHADE_TYPE: Final[dict[int, str]] = {
     52: "Banded Shades",
     53: "Sonnette",
     57: "Carole Roman Shades",
+    69: "Curtain, Left Stack",
+    70: "Curtain, Right Stack",
+    71: "Curtain, Split Stack",
     84: "Vignette",
     # top down (single rail, inverted position)
     7: "Top Down",
@@ -59,9 +64,13 @@ SHADE_TYPE: Final[dict[int, str]] = {
     # tilt only (no position movement)
     39: "Parkland",
     40: "Everwood Alternative Wood Blinds",
+    66: "Palm Beach Shutters",
     # tilt on closed
     18: "Bottom Up, Tilt on Closed 90°",
+    23: "Silhouette",
+    43: "Facette",
     44: "Twist",
+    72: "Silhouette",
     # tilt anywhere (position + tilt)
     51: "Venetian, Tilt Anywhere",
     54: "Vertical Slats, Left Stack",
@@ -71,6 +80,7 @@ SHADE_TYPE: Final[dict[int, str]] = {
     # duolite (dual overlapping fabrics)
     38: "Dual Overlapped, Tilt 90°",
     65: "Dual Overlapped",
+    79: "Duolite Lift",
     95: "Dual Overlapped Illuminated",
 }
 
@@ -96,9 +106,13 @@ SHADE_CAPABILITIES: Final[dict[int, ShadeCapability]] = {
     # tilt only (no position movement)
     39: ShadeCapability(has_tilt=True, tilt_only=True),
     40: ShadeCapability(has_tilt=True, tilt_only=True),
+    66: ShadeCapability(has_tilt=True, tilt_only=True),
     # tilt on closed (tilt only available at fully closed position)
     18: ShadeCapability(has_tilt=True, is_tilt_on_closed=True),
+    23: ShadeCapability(has_tilt=True, is_tilt_on_closed=True),
+    43: ShadeCapability(has_tilt=True, is_tilt_on_closed=True),
     44: ShadeCapability(has_tilt=True, is_tilt_on_closed=True),
+    72: ShadeCapability(has_tilt=True, is_tilt_on_closed=True),
     # top-down only (single rail, inverted position)
     7: ShadeCapability(is_top_down=True),
     10: ShadeCapability(is_top_down=True),
@@ -110,6 +124,7 @@ SHADE_CAPABILITIES: Final[dict[int, ShadeCapability]] = {
     9: ShadeCapability(is_tdbu=True, is_duolite=True),
     38: ShadeCapability(is_duolite=True),
     65: ShadeCapability(is_duolite=True),
+    79: ShadeCapability(is_duolite=True),
     95: ShadeCapability(is_duolite=True),
 }
 
