@@ -32,10 +32,10 @@
     "entity": {
         "binary_sensor": {
             "reset_clock": {
-                "name": "Clock reset"
+                "name": "Clock reset required"
             },
             "reset_mode": {
-                "name": "Mode reset"
+                "name": "Mode reset required"
             }
         }
     }

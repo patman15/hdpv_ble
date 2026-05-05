@@ -31,12 +31,14 @@ BINARY_SENSOR_TYPES: list[BinarySensorEntityDescription] = [
     BinarySensorEntityDescription(
         key="reset_clock",
         translation_key="reset_clock",
+        device_class=BinarySensorDeviceClass.PROBLEM,
         entity_registry_enabled_default=False,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     BinarySensorEntityDescription(
         key="reset_mode",
         translation_key="reset_mode",
+        device_class=BinarySensorDeviceClass.PROBLEM,
         entity_registry_enabled_default=False,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
