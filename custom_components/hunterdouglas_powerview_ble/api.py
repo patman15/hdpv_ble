@@ -77,6 +77,7 @@ SHADE_TYPE: Final[dict[int, str]] = {
     55: "Vertical Slats, Right Stack",
     56: "Vertical Slats, Split Stack",
     62: "Venetian, Tilt Anywhere",
+    103: "Designer Banded, Tilt Anywhere",
     # duolite (dual overlapping fabrics)
     38: "Dual Overlapped, Tilt 90°",
     65: "Dual Overlapped",
@@ -103,6 +104,7 @@ SHADE_CAPABILITIES: Final[dict[int, ShadeCapability]] = {
     55: ShadeCapability(has_tilt=True),
     56: ShadeCapability(has_tilt=True),
     62: ShadeCapability(has_tilt=True),
+    103: ShadeCapability(has_tilt=True),
     # tilt only (no position movement)
     39: ShadeCapability(has_tilt=True, tilt_only=True),
     40: ShadeCapability(has_tilt=True, tilt_only=True),
