@@ -16,5 +16,9 @@
   "issue_tracker": "https://github.com/patman15/hdpv_ble/issues",
   "loggers": ["hunterdouglas_powerview_ble"],
   "requirements": ["cryptography>=43.0.0"],
-  "version": "0.24"
+  "version": "0.24",
+  "zeroconf": [
+    { "type": "_powerview-g3._tcp.local." },
+    { "type": "_PowerView-G3._tcp.local." }
+  ]
 }

@@ -14,6 +14,19 @@
           "hub_url": "Base URL of your PowerView G3 hub, e.g. {hub_url_example}",
           "home_key": "32-character hex string (e.g. 0102030405060708090a0b0c0d0e0f10) or \\x escaped format (e.g. \\x01\\x02...)"
         }
+      },
+      "zeroconf_confirm": {
+        "title": "PowerView gateway discovered",
+        "description": "A PowerView G3 gateway was found at {name}. Choose how to configure your encryption key — fetch it automatically from the gateway, enter it manually, or skip. All shades on your network will be discovered automatically via Bluetooth.",
+        "data": {
+          "key_method": "Key source",
+          "hub_url": "PowerView hub URL",
+          "home_key": "HomeKey (32 hex characters or \\xNN format)"
+        },
+        "data_description": {
+          "hub_url": "Base URL of your PowerView G3 hub, e.g. {hub_url_example}",
+          "home_key": "32-character hex string (e.g. 0102030405060708090a0b0c0d0e0f10) or \\x escaped format (e.g. \\x01\\x02...)"
+        }
       }
     },
     "error": {
