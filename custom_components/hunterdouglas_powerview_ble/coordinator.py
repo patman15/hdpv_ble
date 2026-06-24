@@ -28,6 +28,11 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
     _DEV_INFO_REFRESH_S: Final[float] = 24 * 3600
     _DEV_INFO_RETRY_S: Final[float] = 60
 
+    # Position/battery come only from V2 adverts. Past this many seconds without
+    # a fresh V2 record we stop reporting the retained sample as current, so an
+    # out-of-range shade doesn't keep showing a stale position.
+    _STALE_AFTER_S: Final[float] = 300.0
+
     def __init__(
         self,
         hass: HomeAssistant,
@@ -45,6 +50,7 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
         )
         self.api = PowerViewBLE(ble_device, home_key)
         self.data: dict[str, int | float | bool] = {}
+        self._last_v2_at: float = 0.0
         self._manuf_dat = data.get("manufacturer_data")
         self.dev_details: dict[str, str] = {}
         self.velocity: int = 0
@@ -76,6 +82,20 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
     def shade_capabilities(self) -> ShadeCapability:
         """Return the shade capabilities based on type ID."""
         return get_shade_capabilities(self.type_id)
+
+    @property
+    def data_available(self) -> bool:
+        """Whether the last V2 advertisement is recent enough to trust.
+
+        Position, tilt and battery are only carried in V2 adverts. An
+        out-of-range shade stops sending them while HA may still consider the
+        device present, so past ``_STALE_AFTER_S`` we no longer report the
+        retained sample as current.
+        """
+        return (
+            self._last_v2_at != 0.0
+            and time.monotonic() - self._last_v2_at < self._STALE_AFTER_S
+        )
 
     async def query_dev_info(self) -> None:
         """Fetch device info over GATT and push into the device registry.
@@ -191,15 +211,22 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
 
         LOGGER.debug("BLE event %s: %s", change, service_info.manufacturer_data)
         self.api.set_ble_device(service_info.device)
-        new_data: dict[str, int | float | bool] = {ATTR_RSSI: service_info.rssi}
+
+        # Merge onto the retained sample rather than replacing it: an advert
+        # without a valid V2 record (wrong length / legacy format / 2073
+        # absent) decodes to {} and must not wipe the last-known position,
+        # tilt and battery state.
+        new_data: dict[str, int | float | bool] = dict(self.data)
+        new_data[ATTR_RSSI] = service_info.rssi
         if change == bluetooth.BluetoothChange.ADVERTISEMENT:
-            new_data.update(
-                self.api.dec_manufacturer_data(
-                    bytearray(service_info.manufacturer_data.get(2073, b""))
-                )
+            decoded = self.api.dec_manufacturer_data(
+                bytearray(service_info.manufacturer_data.get(2073, b""))
             )
-            self.api.encrypted = bool(new_data.get("home_id"))
-            self._maybe_refresh_dev_info()
+            if decoded:
+                new_data.update(decoded)
+                self.api.encrypted = bool(decoded.get("home_id"))
+                self._last_v2_at = time.monotonic()
+                self._maybe_refresh_dev_info()
 
         if new_data == self.data:
             return

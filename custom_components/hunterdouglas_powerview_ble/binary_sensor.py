@@ -88,4 +88,6 @@ class PVBinarySensor(
     @property
     def is_on(self) -> bool | None:  # type: ignore[reportIncompatibleVariableOverride]
         """Handle updated data from the coordinator."""
+        if not self.coordinator.data_available:
+            return None
         return bool(self.coordinator.data.get(self.entity_description.key))

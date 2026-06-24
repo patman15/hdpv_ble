@@ -87,6 +87,8 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
     @property
     def is_opening(self) -> bool | None:  # type: ignore[reportIncompatibleVariableOverride]
         """Return if the cover is opening or not."""
+        if not self._coord.data_available:
+            return None
         return bool(self._coord.data.get("is_opening")) or (
             isinstance(self._target_position, int)
             and isinstance(self.current_cover_position, int)
@@ -97,6 +99,8 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
     @property
     def is_closing(self) -> bool | None:  # type: ignore[reportIncompatibleVariableOverride]
         """Return if the cover is closing or not."""
+        if not self._coord.data_available:
+            return None
         return bool(self._coord.data.get("is_closing")) or (
             isinstance(self._target_position, int)
             and isinstance(self.current_cover_position, int)
@@ -123,8 +127,7 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
 
         None is unknown, 0 is closed, 100 is fully open.
         """
-        pos: Final = self._coord.data.get(ATTR_CURRENT_POSITION)
-        return round(pos) if pos is not None else None
+        return self._fresh_position(ATTR_CURRENT_POSITION)
 
     async def async_set_cover_position(self, **kwargs: Any) -> None:
         """Move the cover to a specific position."""
@@ -152,6 +155,13 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
 
     def _reset_target_position(self) -> None:
         self._target_position = None
+
+    def _fresh_position(self, key: str) -> int | None:
+        """Return the rounded ``key`` position, or None if stale/absent."""
+        if not self._coord.data_available:
+            return None
+        pos = self._coord.data.get(key)
+        return round(pos) if pos is not None else None
 
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Open the cover."""
@@ -218,8 +228,7 @@ class PowerViewCoverTilt(PowerViewCover):
 
         None is unknown
         """
-        pos: Final = self._coord.data.get(ATTR_CURRENT_TILT_POSITION)
-        return round(pos) if pos is not None else None
+        return self._fresh_position(ATTR_CURRENT_TILT_POSITION)
 
     async def async_set_cover_tilt_position(self, **kwargs: Any) -> None:
         """Move the tilt to a specific position."""
@@ -306,8 +315,8 @@ class PowerViewCoverTopDown(PowerViewCover):
     @property
     def current_cover_position(self) -> int | None:  # type: ignore[reportIncompatibleVariableOverride]
         """Return current position, inverting the device axis."""
-        pos: Final = self._coord.data.get(ATTR_CURRENT_POSITION)
-        return OPEN_POSITION - round(pos) if pos is not None else None
+        pos = self._fresh_position(ATTR_CURRENT_POSITION)
+        return OPEN_POSITION - pos if pos is not None else None
 
     async def async_set_cover_position(self, **kwargs: Any) -> None:
         """Move the cover to a specific position, inverting for the device."""

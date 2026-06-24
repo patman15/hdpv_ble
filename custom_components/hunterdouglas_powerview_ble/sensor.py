@@ -78,5 +78,14 @@ class PVSensor(PassiveBluetoothCoordinatorEntity[PVCoordinator], SensorEntity): 
 
     @property
     def native_value(self) -> int | float | None:  # type: ignore[reportIncompatibleVariableOverride]
-        """Return the sensor value."""
+        """Return the sensor value.
+
+        RSSI refreshes on every advert, so it is always reported. V2-derived
+        values (e.g. battery) read as unknown once the advert data is stale.
+        """
+        if (
+            self.entity_description.key != ATTR_RSSI
+            and not self.coordinator.data_available
+        ):
+            return None
         return self.coordinator.data.get(self.entity_description.key)
