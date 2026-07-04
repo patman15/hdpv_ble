@@ -45,12 +45,17 @@ from .const import (
 )
 from .coordinator import PVCoordinator
 
-# Hub /home/shades powerType (aiopvapi Gen3: 1=hardwired, 2=battery,
-# 3=rechargeable) → our internal PowerType (matches BLE 0xFFDE byte 0).
+# Raw Gen3 /home/shades powerType (aio-powerview-api V3 map) → our internal
+# PowerType. The two use different numbering — internal PowerType follows the
+# BLE 0xFFDE byte-0 encoding where 0=hardwired — so translate explicitly.
+# 0=battery must stay mapped: every Gen3 battery shade reports 0, and leaving
+# it out resolves to None and drops the shade onto the unreliable BLE fallback.
 _HUB_POWERTYPE_TO_INTERNAL: dict[int, PowerType] = {
+    0: PowerType.BATTERY,
     1: PowerType.HARDWIRED,
-    2: PowerType.BATTERY,
-    3: PowerType.RECHARGEABLE,
+    2: PowerType.RECHARGEABLE,
+    11: PowerType.RECHARGEABLE,  # fixed rechargeable (PowerView+ internal battery)
+    12: PowerType.HARDWIRED,  # fixed hardwired (smart power supply)
 }
 
 
