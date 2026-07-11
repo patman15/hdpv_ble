@@ -49,12 +49,9 @@ def _add_entities(
     coordinator: PVCoordinator, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Create binary sensor entities for a single shade coordinator."""
-    include_battery = coordinator.show_battery_entities
     mac = format_mac(coordinator.address)
     async_add_entities(
-        PVBinarySensor(coordinator, descr, mac)
-        for descr in BINARY_SENSOR_TYPES
-        if include_battery or descr.key != ATTR_BATTERY_CHARGING
+        PVBinarySensor(coordinator, descr, mac) for descr in BINARY_SENSOR_TYPES
     )
 
 

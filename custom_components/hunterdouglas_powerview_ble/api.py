@@ -22,7 +22,7 @@ from homeassistant.components.cover import (
     ATTR_CURRENT_TILT_POSITION,
 )
 
-from .const import LOGGER, TIMEOUT, PowerType
+from .const import LOGGER, TIMEOUT
 
 UUID_COV_SERVICE: Final[str] = normalize_uuid_str("fdc1")
 UUID_TX: Final[str] = "cafe1001-c0ff-ee01-8000-a110ca7ab1e0"
@@ -158,7 +158,6 @@ class ShadeCmd(Enum):
     STOP = 0xB8F7
     ACTIVATE_SCENE = 0xBAF7
     IDENTIFY = 0x11F7
-    POWER_STATUS = 0xDEFF
 
 
 @dataclass
@@ -271,22 +270,6 @@ class PowerViewBLE:
             except Exception as ex:
                 LOGGER.error("Error: %s - %s", type(ex).__name__, ex)
                 raise
-
-    async def _query(self, cmd: tuple[ShadeCmd, bytes]) -> bytes:
-        """Send a read-type opcode and return its payload bytes."""
-        async with self._cmd_lock:
-            await self._connect()
-            try:
-                try:
-                    seq = await self._transact(cmd)
-                except TimeoutError as ex:
-                    raise TimeoutError("Device did not send response.") from ex
-                if not self._verify_header(self._data, seq, cmd[0]):
-                    raise BleakError("Malformed query response header")
-                length = int(self._data[3])
-                return bytes(self._data[4 : 4 + length])
-            finally:
-                await self._client.disconnect()
 
     @staticmethod
     def dec_manufacturer_data(data: bytearray) -> dict[str, float | int | bool]:
@@ -440,37 +423,6 @@ class PowerViewBLE:
                 await self.disconnect()
         LOGGER.debug("%s device data: %s", self.name, data)
         return data.copy()
-
-    async def query_power_type(self) -> PowerType | None:
-        """Return the shade's power source, or None if unknown/unavailable."""
-        if self._cipher is None:
-            return None
-        try:
-            payload = await self._query((ShadeCmd.POWER_STATUS, b""))
-        except (BleakError, TimeoutError) as ex:
-            LOGGER.debug("%s: power_type query failed: %s", self.name, ex)
-            return None
-
-        # A 1-byte reply is an error code (e.g. 0x04 = invalid length); it
-        # must NOT be returned as a power_type or it would be misread as
-        # PowerType.value=4.
-        if len(payload) == 1:
-            LOGGER.debug(
-                "%s: power_type query rejected (err=0x%02X)", self.name, payload[0]
-            )
-            return None
-        if len(payload) == 8:
-            try:
-                return PowerType(payload[0])
-            except ValueError:
-                LOGGER.debug(
-                    "%s: unknown power_type byte 0x%02X", self.name, payload[0]
-                )
-                return None
-        LOGGER.debug(
-            "%s: unexpected power_type payload length %d", self.name, len(payload)
-        )
-        return None
 
     def _on_disconnect(self, client: BleakClient) -> None:
         """Disconnect callback function."""

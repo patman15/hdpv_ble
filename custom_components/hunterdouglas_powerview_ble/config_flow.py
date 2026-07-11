@@ -290,8 +290,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if method == "manual":
             # Still capture a hub URL if the user provided one — the integration
-            # uses it to fetch shade metadata (friendly names, power_type) even
-            # when the homekey itself was supplied manually.
+            # uses it to fetch the shades' friendly names even when the homekey
+            # itself was supplied manually.
             hub_url = user_input.get(CONF_HUB_URL, "").rstrip("/")
             if hub_url:
                 self._hub_url = hub_url

@@ -17,7 +17,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
 
 from .api import SHADE_TYPE, PowerViewBLE, ShadeCapability, get_shade_capabilities
-from .const import ATTR_RSSI, CONF_HOME_KEY, DOMAIN, LOGGER, PowerType
+from .const import ATTR_RSSI, CONF_HOME_KEY, DOMAIN, LOGGER
 
 
 class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
@@ -39,7 +39,6 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
         ble_device: BLEDevice,
         data: dict[str, Any],
         friendly_name: str | None = None,
-        power_type: PowerType | None = None,
     ) -> None:
         """Initialize BMS data coordinator."""
         assert ble_device.name is not None
@@ -54,7 +53,6 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
         self._manuf_dat = data.get("manufacturer_data")
         self.dev_details: dict[str, str] = {}
         self.velocity: int = 0
-        self._power_type: PowerType | None = power_type
         self._last_dev_info_at: float = 0.0
         self._dev_info_task: asyncio.Task[None] | None = None
 
@@ -142,25 +140,6 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
         self._dev_info_task = self.hass.async_create_background_task(
             self._refresh_dev_info_safe(), name=f"pvble_dev_info_{self.address}"
         )
-
-    @property
-    def power_type(self) -> PowerType | None:
-        """Return the shade's power source, or None if unknown."""
-        return self._power_type
-
-    @property
-    def show_battery_entities(self) -> bool:
-        """Whether battery-related entities should be created for this shade.
-
-        Unknown power_type is treated as battery-ish so real battery data is
-        never silently hidden on unclassified shades.
-        """
-        return self._power_type != PowerType.HARDWIRED
-
-    async def query_power_type(self) -> None:
-        """Query the shade's power_type over BLE and cache the result."""
-        LOGGER.debug("%s: querying power_type", self.name)
-        self._power_type = await self.api.query_power_type()
 
     @property
     def device_info(self) -> DeviceInfo:
