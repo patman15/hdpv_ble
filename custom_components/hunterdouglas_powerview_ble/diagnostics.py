@@ -1,23 +1,18 @@
 """Diagnostics for the Hunter Douglas PowerView (BLE) integration.
 
-Nothing in this module interprets what it collects, by design. The integration
-used to classify a shade's power source and hide the battery entities of any
-shade it judged hardwired; the classification was built on samples taken from
-hardwired shades only, so it misread battery shades as hardwired and hid the
-very sensors it was meant to protect. That code is gone.
+Dumps every signal the integration holds for each shade, decoded as little as
+possible: the advertisement bytes, the shade's replies to its GATT queries, the
+hub's record, plus device, capability and connectivity state. It is meant to be
+attached to a bug report, whatever the bug is — position and tilt, range and
+connectivity, encryption and control failures, the reset/reinit flags, or a
+shade's power source.
 
-This dump gathers the evidence needed to get the encoding right instead of
-guessing at it: the hub's record verbatim, the raw advertisement, and the raw
-0xFFDE reply, correlated per shade so a user can label each one and report back.
-Three things are unknown and each is answered by a field below:
-
-  * what the hub reports in `powerType` for a *known* battery shade
-    (`shades[].hub_record`)
-  * whether the 0xFFDE reply differs at all between battery and hardwired
-    shades (`shades[].power_status_0xffde`)
-  * whether 0xFFDE byte 2 is a real battery percentage — it reads 100 on
-    hardwired shades — which would beat the advertisement's four-step level
-    (`shades[].advertisement.power_level_code`)
+Raw values are reported *alongside* the integration's interpretation of them,
+never instead of it, because the two have disagreed before: byte 0 of the 0xFFDE
+reply was taken for a power-source enum when it is really the protocol's status
+code. It reads 0 on every successful reply, so the integration concluded that
+every shade was mains-powered and stripped the battery sensors off the ones that
+were not. A decoded field can be wrong; the bytes it came from cannot.
 """
 
 import asyncio
@@ -27,42 +22,45 @@ import aiohttp
 from bleak.exc import BleakError
 
 from homeassistant.components import bluetooth
+from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceEntry
 from homeassistant.helpers.redact import async_redact_data
 
 from . import ConfigEntryType
+from .api import ShadeCmd
 from .const import CONF_HOME_KEY, CONF_HUB_URL, DOMAIN, MFCT_ID
 from .coordinator import PVCoordinator
 
-# home_key is the AES key that drives the shades and home_id identifies the
-# PowerView network; a serial number identifies the owner's hardware. None of
-# them are needed to answer the power-source question, and this file is meant
-# to be attached to a public issue.
+# home_key is the AES key that drives the shades, home_id identifies the
+# PowerView network, and a serial number identifies the owner's hardware. None
+# is needed to diagnose anything, and this file gets attached to public issues.
+# Each key is listed in both spellings: the shade reports snake_case over GATT
+# and the hub reports camelCase in its JSON, so redacting one spelling alone
+# silently leaks the same value from the other source.
 TO_REDACT: Final[set[str]] = {
     CONF_HOME_KEY,
     "homeId",
+    "homeKey",
     "home_id",
+    "serialNumber",
     "serial_nr",
     "serial_number",
 }
 
-# Reading 0xFFDE means connecting to the shade. Opening one connection per shade
-# at once is the adapter contention that made the old startup-time power query
-# flaky in the first place, so keep the fan-out bounded even though a user has
-# to click a button to get here.
+# Every GATT query costs a BLE connection. Opening one per shade at once is the
+# adapter contention that made the old startup-time queries unreliable, so keep
+# the fan-out bounded even though a user has to click a button to get here.
 _MAX_PARALLEL_QUERIES: Final[int] = 3
 _QUERY_TIMEOUT_S: Final[float] = 20.0
 _HUB_TIMEOUT_S: Final[float] = 10.0
 
-WHAT_WE_NEED: Final[str] = (
-    "This integration does not detect a shade's power source, so every shade "
-    "gets battery entities whether or not it has a battery. The values below "
-    "are raw and uninterpreted on purpose. To help us encode this correctly, "
-    "please attach this file to the GitHub issue and tell us, for each shade "
-    "listed under 'shades', whether it runs on a battery wand, on a "
-    "rechargeable battery, or is hardwired to mains power."
+_NOTE: Final[str] = (
+    "Raw, uninterpreted values for every shade, for attaching to a GitHub "
+    "issue. Some things the integration cannot know and must be stated in the "
+    "issue text — notably whether a shade runs on a battery or is wired to "
+    "mains, which it does not detect."
 )
 
 
@@ -72,7 +70,7 @@ async def _async_hub_shades(
     """Return the hub's status and its raw /home/shades records, by BLE name.
 
     Records pass through verbatim. Establishing what the hub actually sends is
-    the point, so nothing here is mapped, renamed or filtered.
+    half the value here, so nothing is mapped, renamed or filtered.
     """
     if not hub_url:
         return {"configured": False}, {}
@@ -84,8 +82,12 @@ async def _async_hub_shades(
             resp.raise_for_status()
             shades = await resp.json(content_type=None)
     except (TimeoutError, aiohttp.ClientError, ValueError) as ex:
+        # A .local hub URL resolves over mDNS, which is flaky from inside a
+        # container at boot; the integration swallows that failure silently, so
+        # surface it here.
         return {
             "configured": True,
+            "url": hub_url,
             "reachable": False,
             "error": f"{type(ex).__name__}: {ex}",
         }, {}
@@ -95,6 +97,7 @@ async def _async_hub_shades(
     }
     status: dict[str, Any] = {
         "configured": True,
+        "url": hub_url,
         "reachable": True,
         "shade_count": len(records),
         # Hub records are joined to shades by an exact name match, so a shade
@@ -105,11 +108,50 @@ async def _async_hub_shades(
     return status, records
 
 
-def _advertisement(hass: HomeAssistant, coord: PVCoordinator) -> dict[str, Any]:
-    """Return the shade's most recent advertisement, raw and decoded."""
-    service_info = bluetooth.async_last_service_info(
-        hass, coord.address, connectable=True
-    )
+def _device(coord: PVCoordinator) -> dict[str, Any]:
+    """Return the shade's identity: type, model and firmware revisions."""
+    return {
+        "type_id": coord.type_id,
+        **async_redact_data(dict(coord.dev_details), TO_REDACT),
+    }
+
+
+def _capabilities(coord: PVCoordinator) -> dict[str, bool]:
+    """Return what the integration believes this shade type can do.
+
+    Derived from type_id alone, so a shade whose entities look wrong (a missing
+    tilt, a phantom second rail) is usually a wrong or unmapped type_id here.
+    """
+    caps = coord.shade_capabilities
+    return {
+        "has_tilt": caps.has_tilt,
+        "tilt_only": caps.tilt_only,
+        "is_tilt_on_closed": caps.is_tilt_on_closed,
+        "is_top_down": caps.is_top_down,
+        "is_tdbu": caps.is_tdbu,
+        "is_duolite": caps.is_duolite,
+    }
+
+
+def _connectivity(
+    coord: PVCoordinator, service_info: BluetoothServiceInfoBleak | None
+) -> dict[str, Any]:
+    """Return radio and encryption state, for range and control failures."""
+    return {
+        "present": coord.device_present,
+        "rssi": service_info.rssi if service_info else None,
+        # Position, tilt and battery ride only on V2 adverts; once those stop
+        # arriving the retained sample is stale and the entities read unknown.
+        "advert_stale": not coord.data_available,
+        "encrypted": coord.api.encrypted,
+        "home_key_configured": coord.api.has_key,
+    }
+
+
+def _advertisement(
+    coord: PVCoordinator, service_info: BluetoothServiceInfoBleak | None
+) -> dict[str, Any]:
+    """Return the last advertisement: raw bytes and the decoded sample."""
     if service_info is None:
         return {"error": "no advertisement seen for this shade"}
 
@@ -117,41 +159,48 @@ def _advertisement(hass: HomeAssistant, coord: PVCoordinator) -> dict[str, Any]:
     return {
         "raw": raw.hex(" "),
         "length": len(raw),
-        # The top two bits of byte 8 are what the battery sensor reports, via a
-        # 3/2/1/0 -> 100/50/20/0 % table. A hardwired shade is known to sit at
-        # 3; report the code itself so what a battery shade puts here can be
-        # compared against it.
+        "is_v2_record": len(raw) == 9,
+        # The top two bits of byte 8 drive the battery sensor via a
+        # 3/2/1/0 -> 100/50/20/0 % table. Report the code itself: hardwired
+        # shades also sit at 3, so the decoded 100% below means little on its
+        # own.
         "power_level_code": raw[8] >> 6 if len(raw) == 9 else None,
-        "rssi": service_info.rssi,
-        "stale": not coord.data_available,
         "decoded": async_redact_data(dict(coord.data), TO_REDACT),
+        "velocity": coord.velocity,
     }
 
 
-async def _async_power_status(
+async def _async_queries(
     coord: PVCoordinator, sem: asyncio.Semaphore
 ) -> dict[str, Any]:
-    """Read one shade's raw 0xFFDE reply over BLE.
+    """Read the shade's GATT queries, reported byte-for-byte.
 
     Failure is data too, not an error to raise: a shade that cannot be reached
     still belongs in the report, so the reason is recorded and the dump goes on.
+    Keyed by opcode so further queries can be added without reshaping the file.
     """
     if coord.api.encrypted and not coord.api.has_key:
-        return {"error": "shade is encrypted and no home key is configured"}
+        reason = {"error": "shade is encrypted and no home key is configured"}
+        return {ShadeCmd.POWER_STATUS.name: reason}
 
     async with sem:
         try:
             payload = await asyncio.wait_for(
                 coord.api.query_power_status(), timeout=_QUERY_TIMEOUT_S
             )
+            result: dict[str, Any] = {
+                "opcode": f"0x{ShadeCmd.POWER_STATUS.value:04X}",
+                "raw": payload.hex(" "),
+                "length": len(payload),
+                "bytes": {f"b{idx}": value for idx, value in enumerate(payload)},
+            }
         except (BleakError, TimeoutError) as ex:
-            return {"error": f"{type(ex).__name__}: {ex}"}
+            result = {
+                "opcode": f"0x{ShadeCmd.POWER_STATUS.value:04X}",
+                "error": f"{type(ex).__name__}: {ex}",
+            }
 
-    return {
-        "raw": payload.hex(" "),
-        "length": len(payload),
-        "bytes": {f"b{idx}": value for idx, value in enumerate(payload)},
-    }
+    return {ShadeCmd.POWER_STATUS.name: result}
 
 
 async def _async_shade(
@@ -160,17 +209,21 @@ async def _async_shade(
     hub_records: dict[str, dict[str, Any]],
     sem: asyncio.Semaphore,
 ) -> dict[str, Any]:
-    """Collect every raw power-related signal available for one shade."""
+    """Collect every signal the integration holds for one shade."""
+    service_info = bluetooth.async_last_service_info(
+        hass, coord.address, connectable=True
+    )
     ble_name = coord.api.name
     record = hub_records.get(ble_name)
     return {
         "name": coord.friendly_name,
         "ble_name": ble_name,
         "address": coord.address,
-        "type_id": coord.type_id,
-        "device": async_redact_data(dict(coord.dev_details), TO_REDACT),
-        "advertisement": _advertisement(hass, coord),
-        "power_status_0xffde": await _async_power_status(coord, sem),
+        "device": _device(coord),
+        "capabilities": _capabilities(coord),
+        "connectivity": _connectivity(coord, service_info),
+        "advertisement": _advertisement(coord, service_info),
+        "queries": await _async_queries(coord, sem),
         "hub_matched": record is not None,
         "hub_record": async_redact_data(record, TO_REDACT) if record else None,
     }
@@ -179,12 +232,7 @@ async def _async_shade(
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: ConfigEntryType
 ) -> dict[str, Any]:
-    """Return diagnostics for every shade in the config entry.
-
-    Deliberately dumps the whole entry rather than one device: the encoding can
-    only be settled by comparing a battery shade against a hardwired one, so a
-    single file covering a mixed install is exactly what is wanted.
-    """
+    """Return diagnostics for every shade in the config entry."""
     hub_status, hub_records = await _async_hub_shades(
         hass, entry.data.get(CONF_HUB_URL, "")
     )
@@ -196,7 +244,7 @@ async def async_get_config_entry_diagnostics(
         )
     )
     return {
-        "what_we_need_from_you": WHAT_WE_NEED,
+        "note": _NOTE,
         "config_entry": async_redact_data(dict(entry.data), TO_REDACT),
         "hub": hub_status,
         "shades": shades,
@@ -219,7 +267,7 @@ async def async_get_device_diagnostics(
         hass, entry.data.get(CONF_HUB_URL, "")
     )
     return {
-        "what_we_need_from_you": WHAT_WE_NEED,
+        "note": _NOTE,
         "hub": hub_status,
         "shade": await _async_shade(hass, coord, hub_records, asyncio.Semaphore(1)),
     }
