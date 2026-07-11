@@ -87,13 +87,26 @@ GATT_DEV_INFO: list[tuple[str, str]] = [
 #            dummy data, off-by-one vs real firmware.
 #   0xFFDE → 8-byte payload.  Byte-by-byte findings on hardwired Duette
 #            (type 6, fw_rev=22), verified across four shades and ~10
-#            targeted motion/idle experiments on one unit:
-#              b0 power_type   0=hardwired (confirmed); 1=battery,
-#                              2=rechargeable (hypothesis — no non-
-#                              hardwired sample yet).
-#              b1 = 0x01       constant on all hardwired shades seen.
-#                              Likely a power-type subvariant or flags
-#                              byte; pending a non-hardwired sample.
+#            targeted motion/idle experiments on one unit, then corrected
+#            against a six-shade dump cross-checked with the G3 hub:
+#              b0 = 0x00       status, 0 = success.  NOT the power type.
+#                              Every reply in this protocol leads with a
+#                              status code — a rejected 0xFFDE returns a
+#                              1-byte 0x04 (invalid length) in this same
+#                              position, and _verify_ack_reply treats
+#                              payload[0] == 0 as success.  It was read as
+#                              a power-source enum once, which made every
+#                              shade that answered look hardwired (0 being
+#                              the hardwired code) and silently stripped
+#                              the battery sensors off battery shades.  A
+#                              constant cannot classify anything; the only
+#                              reason it looked right is that every sample
+#                              behind it came from a hardwired shade.
+#              b1 = 0x01       power type, and it agrees with the hub: the
+#                              G3 reports powerType=1 for these same six
+#                              shades, all of them confirmed mains-powered.
+#                              The battery and rechargeable codes are still
+#                              unknown — no such sample exists yet.
 #              b2 = 0x64 (100) strong hypothesis: battery/power-level
 #                              %, pegged at 100 on wall power.  A
 #                              battery shade should report its real %
@@ -151,12 +164,13 @@ PV_ERROR_CODES: dict[int, str] = {
     0x04: "invalid length (hypothesis)",
 }
 
-# 0xFFDE byte 0 — power type.  0 is confirmed hardwired on fw_rev=22.
-# 1/2 are hypotheses pending sample data from battery/rechargeable shades.
+# 0xFFDE byte 1 — power type (byte 0 is the reply's status code, not the power
+# type).  1 = hardwired is confirmed: six shades at fw_rev=22 all report b1=0x01,
+# the G3 hub independently reports powerType=1 for the same six, and all six are
+# known to be mains-powered.  Every other code is deliberately absent: guessing
+# at them is what produced the last bug, so an unseen value prints as unknown.
 POWER_TYPE_LABELS: dict[int, str] = {
-    0: "hardwired",
-    1: "battery (hypothesis)",
-    2: "rechargeable (hypothesis)",
+    1: "hardwired (confirmed)",
 }
 
 # Known-good response lengths per opcode.  Used only by annotate_query
@@ -424,20 +438,21 @@ def annotate_query(cmd: int, payload: bytes) -> str | None:
             )
         return "\n".join(lines)
     if cmd == 0xFFDE and len(payload) == 8:
-        pt = payload[0]
-        label = POWER_TYPE_LABELS.get(pt, f"unknown ({pt})")
-        # Per-byte interpretations as of 2026-04-21 investigation (see
-        # module-level comment for the experiment log).  b0 and b6 are
-        # confirmed; b1/b2/b4/b7 are strong hypotheses based on four
-        # hardwired shades at fw_rev=22; b3 is a live noisy byte; b5 is
-        # persistent per-shade state with an unknown refresh trigger.
+        power_type = payload[1]
+        label = POWER_TYPE_LABELS.get(power_type, f"unknown ({power_type})")
+        # Per-byte interpretations as of 2026-04-21, corrected once the hub
+        # cross-check landed (see module-level comment).  b0, b1 and b6 are
+        # confirmed; b2/b4/b7 are strong hypotheses based on hardwired shades
+        # at fw_rev=22; b3 is a live noisy byte; b5 is persistent per-shade
+        # state with an unknown refresh trigger.
         # 11-space indent on continuation lines aligns with the "→ "
         # prefix added by _print_queries (9 spaces + arrow + space).
         indent = "           "
         return (
-            f"byte 0 = 0x{payload[0]:02X} → power_type={pt} ({label})\n"
-            f"{indent}byte 1 = 0x{payload[1]:02X} → power-subtype/flags "
-            f"(const 0x01 on hardwired; hypothesis)\n"
+            f"byte 0 = 0x{payload[0]:02X} → status (0 = success; NOT the power "
+            f"type — reading it as one is what hid the battery sensors)\n"
+            f"{indent}byte 1 = 0x{payload[1]:02X} → power_type={power_type} "
+            f"({label}); same encoding as the hub's powerType\n"
             f"{indent}byte 2 = 0x{payload[2]:02X} ({payload[2]}) → "
             f"battery/power level % (hypothesis — pegged at 100 on hardwired)\n"
             f"{indent}byte 3 = 0x{payload[3]:02X} → live/noisy byte "

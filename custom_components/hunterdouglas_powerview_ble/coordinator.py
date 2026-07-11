@@ -69,6 +69,11 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
         )
 
     @property
+    def friendly_name(self) -> str:
+        """Return the shade's resolved friendly name."""
+        return self._friendly_name
+
+    @property
     def type_id(self) -> int | None:
         """Return the shade type ID from manufacturer data or live BLE data."""
         if self._manuf_dat:

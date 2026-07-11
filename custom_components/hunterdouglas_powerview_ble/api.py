@@ -158,6 +158,7 @@ class ShadeCmd(Enum):
     STOP = 0xB8F7
     ACTIVATE_SCENE = 0xBAF7
     IDENTIFY = 0x11F7
+    POWER_STATUS = 0xDEFF
 
 
 @dataclass
@@ -270,6 +271,22 @@ class PowerViewBLE:
             except Exception as ex:
                 LOGGER.error("Error: %s - %s", type(ex).__name__, ex)
                 raise
+
+    async def _query(self, cmd: tuple[ShadeCmd, bytes]) -> bytes:
+        """Send a read-type opcode and return its payload bytes."""
+        async with self._cmd_lock:
+            await self._connect()
+            try:
+                try:
+                    seq = await self._transact(cmd)
+                except TimeoutError as ex:
+                    raise TimeoutError("Device did not send response.") from ex
+                if not self._verify_header(self._data, seq, cmd[0]):
+                    raise BleakError("Malformed query response header")
+                length = int(self._data[3])
+                return bytes(self._data[4 : 4 + length])
+            finally:
+                await self._client.disconnect()
 
     @staticmethod
     def dec_manufacturer_data(data: bytearray) -> dict[str, float | int | bool]:
@@ -423,6 +440,17 @@ class PowerViewBLE:
                 await self.disconnect()
         LOGGER.debug("%s device data: %s", self.name, data)
         return data.copy()
+
+    async def query_power_status(self) -> bytes:
+        """Return the raw 0xFFDE power-status reply, uninterpreted.
+
+        Deliberately returns bytes rather than a decoded power source. The
+        encoding is not established: byte 0 was previously read as a power-type
+        enum, but every sample behind that reading came from hardwired shades,
+        and acting on it misclassified battery shades as hardwired. Until a
+        confirmed battery-shade sample exists, this is reported, never acted on.
+        """
+        return await self._query((ShadeCmd.POWER_STATUS, b""))
 
     def _on_disconnect(self, client: BleakClient) -> None:
         """Disconnect callback function."""
