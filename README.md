@@ -3,12 +3,13 @@
 [![GitHub Release][releases-shield]][releases]
 [![License][license-shield]](LICENSE)
 
- A Home Assistant integration to support Hunter Douglas Powerview devices via Bluetooth
+A Home Assistant integration to support Hunter Douglas Powerview devices via Bluetooth
 
-> [!WARNING]
-> - This integration is under development!
-> - Test coverage is low, malfunction might occur. 
-> - The HOME_KEY is lost over updates!
+> [!IMPORTANT]
+> I noticed, I'm not able to spend the high efforts of maintaining this Home Assistant integration continuously.
+> [@safepay](https://github.com/safepay) did significant improvements to my original code, which you can get from
+> his fork: https://github.com/safepay/hdpv_ble please switch your HACS source to this URL.
+> **This repository is archived**
 
 ## Features
 - Zero configuration
@@ -94,7 +95,4 @@ In case you have severe troubles,
 [releases]: https://github.com//patman15/hdpv_ble/releases
 
 ## Outlook
-- Add tests!
-- Allow parallel usage to PowerView app as "remote"
-- Add support for tilt function
-- Add support for further device types
+- **This repository is archived!**
